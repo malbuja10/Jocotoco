@@ -1,0 +1,6 @@
+{
+  "type": "https://jocotoco.api/problems/carga-grande",
+  "title": "Carga demasiado grande",
+  "status": 413,
+  "detail": "La grabacion supera el tamano maximo aceptado por el servidor. Consulte GET /v1/limites."
+}

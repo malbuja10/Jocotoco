@@ -3,8 +3,8 @@
 declare(strict_types=1);
 
 /**
- * Punto de entrada del API. Todas las peticiones llegan aqui desde nginx
- * (try_files ... /index.php) sobre php-fpm.
+ * Punto de entrada del API. Todas las peticiones llegan aqui desde Apache
+ * (AliasMatch -> index.php, servido por php-fpm via mod_proxy_fcgi).
  */
 
 use Jocotoco\Application;

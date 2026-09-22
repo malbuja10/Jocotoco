@@ -1,7 +1,7 @@
 # Despliegue en Ubuntu 24.04
 
-Todo lo que sigue asume Ubuntu 24.04 LTS (trae PHP 8.3 y nginx 1.24 en los
-repositorios oficiales, sin necesidad de PPA).
+Todo lo que sigue asume Ubuntu 24.04 LTS (trae PHP 8.3.6 y Apache 2.4.58 en
+los repositorios oficiales, sin necesidad de PPA).
 
 ## 0. Requisitos
 
@@ -9,7 +9,7 @@ repositorios oficiales, sin necesidad de PPA).
 |------------|---------|--------|
 | Ubuntu | 24.04 LTS | — |
 | PHP | 8.3 (`php8.3-fpm`, `php8.3-sqlite3`, `php8.3-mbstring`, `php8.3-curl`, `php8.3-xml`) | repositorio Ubuntu |
-| nginx | 1.24 | repositorio Ubuntu |
+| Apache | 2.4.58 (`apache2`, con `ssl`, `proxy_fcgi`, `headers`, `alias`, `reqtimeout`, `rewrite`) | repositorio Ubuntu |
 | step-ca / step-cli | 0.28.x | paquetes `.deb` de smallstep |
 | Composer | 2.x | getcomposer.org |
 
@@ -68,14 +68,22 @@ sudo deploy/scripts/02-instalar-api.sh --dominio api.jocotoco.local
 
 Hace lo siguiente:
 
-- instala PHP 8.3, nginx, SQLite y Composer;
+- instala PHP 8.3, Apache, SQLite y Composer;
 - crea el usuario de servicio `jocotoco`;
-- crea `/var/lib/jocotoco{,/audio,/tmp}` (0750), `/var/log/jocotoco` y
-  `/var/lib/jocotoco/nginx-tmp` (para `client_body_temp_path`);
+- crea `/var/lib/jocotoco{,/audio,/tmp}` (0750, del usuario `jocotoco`) y
+  `/var/log/jocotoco`;
 - copia el codigo a `/srv/jocotoco` e instala dependencias sin `--dev`;
 - aplica las migraciones (`bin/jocotoco migrate`);
-- instala el pool de php-fpm, el `.ini` de OPcache, el sitio de nginx,
-  la rotacion de logs y el temporizador de purga.
+- habilita MPM event y los modulos de Apache necesarios, instala el pool de
+  php-fpm, el `.ini` de OPcache, el sitio y la conf de endurecimiento de
+  Apache, la rotacion de logs y el temporizador de purga.
+
+Dos usuarios distintos leen el arbol de codigo: php-fpm corre como
+`jocotoco` y Apache como `www-data`. Por eso `/srv/jocotoco` queda de
+`root:root` con permisos de solo lectura para todos (0755/0644) y los datos
+quedan en `/var/lib/jocotoco` con 0750 del usuario `jocotoco`. Nunca guarde
+secretos en el arbol de codigo: van en `/etc/jocotoco` o en el entorno del
+pool.
 
 ### Ajustes que conviene revisar
 
@@ -95,10 +103,11 @@ step certificate inspect /etc/step/certs/intermediate_ca.crt --short
 
 Si cambia `JOCOTOCO_MAX_UPLOAD_BYTES`, ajuste tambien:
 
-- nginx: `client_max_body_size`
+- Apache: `LimitRequestBody` (en `deploy/apache/jocotoco-api.conf`)
 - php-fpm: `upload_max_filesize` (≥ el limite) y `post_max_size` (algo mayor)
+- `public/errores/413.json` si quiere cambiar el texto del rechazo
 
-Tras cualquier cambio: `sudo systemctl reload php8.3-fpm nginx`.
+Tras cualquier cambio: `sudo systemctl reload php8.3-fpm apache2`.
 
 ## 3. Certificado TLS del servidor
 
@@ -110,33 +119,59 @@ sudo deploy/scripts/03-emitir-cert-servidor.sh \
 ```
 
 Emite la hoja del servidor en `/etc/jocotoco/tls/`, publica la raiz en
-`/etc/step/certs/root_ca.crt` (la que nginx usa para **validar clientes**) y
-activa `jocotoco-cert-renew.timer`, que renueva cada 8 h y recarga nginx.
+`/etc/step/certs/root_ca.crt` (la que Apache usa para **validar clientes**) y
+activa `jocotoco-cert-renew.timer`, que renueva cada 8 h y recarga Apache.
 
 ```bash
-sudo nginx -t && sudo systemctl reload nginx
+sudo apache2ctl configtest && sudo systemctl reload apache2
 curl -s --cacert /etc/step/certs/root_ca.crt \
      https://api.jocotoco.local/v1/salud | jq
 ```
 
 ### Como queda el mTLS
 
-En `deploy/nginx/jocotoco-api.conf`:
+En `deploy/apache/jocotoco-api.conf`, a nivel de **VirtualHost**:
 
-```nginx
-ssl_client_certificate /etc/step/certs/root_ca.crt;   # raiz de step-ca
-ssl_verify_client optional;                           # /v1/salud sin cert
-ssl_verify_depth 2;                                   # raiz + intermedia
+```apache
+SSLCACertificateFile /etc/step/certs/root_ca.crt   # raiz de step-ca
+SSLVerifyClient optional                           # /v1/salud sin cert
+SSLVerifyDepth 2                                   # raiz + intermedia
+SSLOptions +StdEnvVars +ExportCertData             # publica SSL_CLIENT_*
 ```
 
-`optional` permite que el monitoreo consulte `/v1/salud`. El resto de las
-rutas se bloquea en el `location /` (`if ($ssl_client_verify != SUCCESS)`) y
-**la aplicacion lo vuelve a comprobar**: si alguien despliega el API sin
-nginx delante, sigue exigiendo el certificado.
+`SSLVerifyClient` **debe ir en el VirtualHost, no en un `<Directory>` ni en
+un `<Location>`**: Apache 2.4 no implementa la autenticacion post-handshake
+de TLS 1.3 y en TLS 1.3 no hay renegociacion, asi que pedir el certificado
+por directorio solo funciona si la conexion cae a TLS 1.2. El certificado se
+solicita una vez en el handshake y la autorizacion se decide despues:
 
-nginx entrega el certificado a PHP en `SSL_CLIENT_CERT` usando
-`$ssl_client_escaped_cert` (URL-encoded, una sola linea). La aplicacion
-tambien acepta el formato multilinea de `$ssl_client_cert`.
+```apache
+<Location "/">
+    Require expr "%{SSL:SSL_CLIENT_VERIFY} == 'SUCCESS'"
+</Location>
+<Location "/v1/salud">
+    Require all granted
+</Location>
+```
+
+`optional` permite que el monitoreo consulte `/v1/salud`; **la aplicacion lo
+vuelve a comprobar**, de modo que si alguien despliega el API sin Apache
+delante sigue exigiendo el certificado.
+
+`SSLOptions +ExportCertData` es lo que entrega el PEM completo en
+`SSL_CLIENT_CERT`; sin esa opcion la aplicacion no puede leer la identidad y
+responde `401`. `mod_proxy_fcgi` pasa todas esas variables al pool de
+php-fpm.
+
+Las rutas llegan a `index.php` con `AliasMatch`, no con `FallbackResource` ni
+`mod_rewrite`: esas dos hacen una redireccion interna que se autoriza contra
+`/index.php`, con lo que `<Location "/v1/salud">` dejaria de aplicarse y la
+sonda de salud empezaria a pedir certificado.
+
+Los rechazos de Apache (403 sin certificado, 413 por `LimitRequestBody`) se
+devuelven en `application/problem+json` mediante `ErrorDocument` y los
+archivos de `public/errores/`, para que el cliente reciba siempre el mismo
+formato de error.
 
 ## 4. Registrar dispositivos
 
@@ -152,7 +187,7 @@ dispositivo. Continue en [`RASPBERRY.md`](RASPBERRY.md).
 ## 5. Verificacion
 
 ```bash
-# Sin certificado: 403 en nginx
+# Sin certificado: 403 (problem+json) en Apache
 curl -sk https://api.jocotoco.local/v1/grabaciones -o /dev/null -w '%{http_code}\n'
 
 # Con certificado de dispositivo
@@ -202,17 +237,22 @@ sudo -u jocotoco sqlite3 /var/lib/jocotoco/jocotoco.sqlite \
 ```bash
 sudo deploy/scripts/02-instalar-api.sh --origen /ruta/al/repo   # rsync + composer + migrate
 sudo systemctl reload php8.3-fpm                                # OPcache no valida timestamps
+sudo systemctl reload apache2
 ```
 
 ## Problemas frecuentes
 
 | Sintoma | Causa habitual |
 |---------|----------------|
-| `401` con `SSL_CLIENT_VERIFY=NONE` | El cliente no envio certificado, o `ssl_verify_client` no esta activo |
+| `401` con `SSL_CLIENT_VERIFY=NONE` | El cliente no envio certificado, o `SSLVerifyClient` no esta activo |
 | `403` "no fue emitido por la CA esperada" | `JOCOTOCO_CA_ISSUER_COMMON_NAME` no coincide con el CN de la intermedia (compruebe con `step certificate inspect`) |
 | `403` "el certificado expiro" | El timer de renovacion del dispositivo no corre, o su reloj esta desfasado (`timedatectl`) |
 | `403` "aun no es valido" | Reloj del servidor atrasado; la tolerancia es de 60 s (`JOCOTOCO_CERTIFICATE_CLOCK_SKEW_SECONDS`) |
-| `413` de nginx (HTML, no JSON) | `client_max_body_size` menor que el audio |
+| `413` con `maximo_bytes` | La aplicacion rechazo por `JOCOTOCO_MAX_UPLOAD_BYTES` |
+| `413` sin cuerpo JSON | `LimitRequestBody` de Apache menor que el audio, o falta `ErrorDocument` |
+| `403` de Apache en `/v1/salud` | Se movio `SSLVerifyClient` a un `<Directory>`/`<Location>`, o se cambio `AliasMatch` por `FallbackResource` |
+| `401` con `SSL_CLIENT_CERT` vacio | Falta `SSLOptions +ExportCertData` en el VirtualHost |
+| 403 "search permissions are missing on a component of the path" | Se quitaron los permisos de lectura de `/srv/jocotoco`: Apache (`www-data`) debe poder atravesar el DocumentRoot |
 | `500` al subir | Permisos de `/var/lib/jocotoco/{audio,tmp}`: deben pertenecer a `jocotoco` |
 | El cambio de una variable no toma efecto | Falta `systemctl reload php8.3-fpm`; verifique con `bin/jocotoco config` |
 | `open_basedir` en los logs | Se movio el `data_dir` fuera de la lista del pool de php-fpm |

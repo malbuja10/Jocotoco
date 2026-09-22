@@ -8,7 +8,8 @@ use Jocotoco\Exception\HttpException;
 
 /**
  * Certificado de cliente X.509 emitido por step-ca, tal como lo entrega
- * nginx a php-fpm mediante los parametros SSL_CLIENT_*.
+ * Apache a php-fpm en los parametros SSL_CLIENT_* (mod_ssl con
+ * "SSLOptions +StdEnvVars +ExportCertData" mas mod_proxy_fcgi).
  */
 final class ClientCertificate
 {
@@ -33,8 +34,11 @@ final class ClientCertificate
     }
 
     /**
-     * Construye el certificado a partir del PEM que nginx expone en
-     * $ssl_client_escaped_cert (URL-encoded) o $ssl_client_cert (multilinea).
+     * Construye el certificado a partir del PEM de SSL_CLIENT_CERT.
+     *
+     * Apache lo entrega multilinea; se aceptan tambien las variantes de
+     * otros servidores (una sola linea URL-encoded, o con cada linea
+     * prefijada por un tabulador) para que el API no dependa del proxy.
      */
     public static function fromPem(string $rawPem): self
     {
@@ -118,12 +122,12 @@ final class ClientCertificate
             return '';
         }
 
-        // $ssl_client_escaped_cert llega URL-encoded en una sola linea.
+        // Variante URL-encoded en una sola linea (nginx: $ssl_client_escaped_cert).
         if (!str_contains($pem, "\n") && str_contains($pem, '%')) {
             $pem = rawurldecode($pem);
         }
 
-        // $ssl_client_cert llega con cada linea prefijada por un tabulador.
+        // Variante con cada linea prefijada por un tabulador (nginx: $ssl_client_cert).
         $pem = str_replace("\t", '', $pem);
 
         return str_contains($pem, 'BEGIN CERTIFICATE') ? trim($pem) : '';

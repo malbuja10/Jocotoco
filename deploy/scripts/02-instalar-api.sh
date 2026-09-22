@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# Instala el API de audio en Ubuntu 24.04: PHP 8.3, nginx, usuario de
+# Instala el API de audio en Ubuntu 24.04: PHP 8.3, Apache, usuario de
 # servicio, directorios de datos y base SQLite.
 #
 # Uso:  sudo ./02-instalar-api.sh [--origen /ruta/al/repo] \
@@ -27,10 +27,10 @@ done
 
 [[ $EUID -eq 0 ]] || { echo "Ejecute este script con sudo." >&2; exit 1; }
 
-echo "==> Instalando PHP 8.3, nginx y utilidades"
+echo "==> Instalando PHP 8.3, Apache y utilidades"
 apt-get update -qq
 apt-get install -y -qq \
-    nginx \
+    apache2 \
     php8.3-fpm php8.3-cli php8.3-sqlite3 php8.3-mbstring php8.3-curl php8.3-xml \
     sqlite3 unzip curl rsync jq ca-certificates
 
@@ -54,7 +54,6 @@ id -u "$USUARIO" >/dev/null 2>&1 || useradd --system --home "$DATOS" --shell /us
 echo "==> Creando directorios"
 install -d -o "$USUARIO" -g "$USUARIO" -m 0750 "$DATOS" "$DATOS/audio" "$DATOS/tmp"
 install -d -o "$USUARIO" -g "$USUARIO" -m 0750 "$LOGS"
-install -d -o www-data -g www-data -m 0700 "$DATOS/nginx-tmp"
 install -d -o root -g root -m 0755 /etc/jocotoco
 install -d -o root -g "$USUARIO" -m 0750 /etc/jocotoco/tls
 
@@ -68,8 +67,16 @@ echo "==> Instalando dependencias de produccion"
 cd "$DESTINO"
 COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader --no-interaction --quiet
 
-chown -R root:"$USUARIO" "$DESTINO"
-chmod -R o-rwx "$DESTINO"
+# El arbol de codigo pertenece a root y es de solo lectura para todos: lo
+# leen dos usuarios distintos (php-fpm como jocotoco y apache como
+# www-data), asi que quitarle el permiso de "otros" impediria que el
+# servidor web pudiera atravesar el DocumentRoot. Aqui no va ningun secreto:
+# las credenciales viven en /etc/jocotoco y en el entorno del pool.
+chown -R root:root "$DESTINO"
+find "$DESTINO" -type d -exec chmod 0755 {} +
+find "$DESTINO" -type f -exec chmod 0644 {} +
+chmod 0755 "$DESTINO/bin/jocotoco"
+find "$DESTINO/deploy" -name '*.sh' -exec chmod 0755 {} +
 
 echo "==> Aplicando migraciones"
 runuser -u "$USUARIO" -- env JOCOTOCO_DATA_DIR="$DATOS" JOCOTOCO_LOG_PATH="$LOGS/api.log" \
@@ -80,11 +87,20 @@ install -m 0644 "$ORIGEN/deploy/php/jocotoco-pool.conf" /etc/php/8.3/fpm/pool.d/
 install -m 0644 "$ORIGEN/deploy/php/opcache-jocotoco.ini" /etc/php/8.3/fpm/conf.d/99-jocotoco.ini
 sed -i "s|env\[JOCOTOCO_LOG_PATH\] = .*|env[JOCOTOCO_LOG_PATH] = $LOGS/api.log|" /etc/php/8.3/fpm/pool.d/jocotoco.conf
 
-echo "==> Configurando nginx"
-sed "s/api\.jocotoco\.local/$DOMINIO/g" "$ORIGEN/deploy/nginx/jocotoco-api.conf" \
-    > /etc/nginx/sites-available/jocotoco-api
-ln -sf /etc/nginx/sites-available/jocotoco-api /etc/nginx/sites-enabled/jocotoco-api
-rm -f /etc/nginx/sites-enabled/default
+echo "==> Configurando Apache"
+# MPM event + php-fpm por mod_proxy_fcgi: mod_php obligaria a usar prefork.
+a2dismod -q -f mpm_prefork 2>/dev/null || true
+a2enmod -q mpm_event ssl proxy_fcgi headers alias reqtimeout rewrite
+sed "s/api\.jocotoco\.local/$DOMINIO/g" "$ORIGEN/deploy/apache/jocotoco-api.conf" \
+    > /etc/apache2/sites-available/jocotoco-api.conf
+install -m 0644 "$ORIGEN/deploy/apache/jocotoco-endurecimiento.conf" /etc/apache2/conf-available/
+a2ensite -q jocotoco-api
+a2enconf -q jocotoco-endurecimiento
+a2dissite -q 000-default default-ssl 2>/dev/null || true
+# La conf global del paquete php8.3-fpm apunta al pool "www"; este sitio
+# declara su propio SetHandler hacia el socket del pool jocotoco.
+grep -q 'ServerName' /etc/apache2/conf-available/jocotoco-endurecimiento.conf || \
+    echo "ServerName $DOMINIO" >> /etc/apache2/conf-available/jocotoco-endurecimiento.conf
 
 echo "==> Instalando rotacion de logs y purga programada"
 install -m 0644 "$ORIGEN/deploy/systemd/jocotoco-purga.service" /etc/systemd/system/
@@ -103,6 +119,7 @@ ROTATE
 
 systemctl daemon-reload
 systemctl restart php8.3-fpm
+apache2ctl configtest
 
 cat <<RESUMEN
 
@@ -118,6 +135,6 @@ cat <<RESUMEN
    sudo ./03-emitir-cert-servidor.sh --dominio ${DOMINIO} \\
         --ca-url https://ca.jocotoco.local:8443 --huella <HUELLA_RAIZ>
 
- Despues:  sudo nginx -t && sudo systemctl reload nginx
+ Despues:  sudo apache2ctl configtest && sudo systemctl reload apache2
 ===========================================================================
 RESUMEN

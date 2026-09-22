@@ -12,10 +12,11 @@ use Jocotoco\Support\Clock;
 /**
  * Autenticacion por mTLS.
  *
- * nginx ya valida la cadena contra la raiz de step-ca (ssl_verify_client on).
+ * Apache ya valida la cadena contra la raiz de step-ca (SSLVerifyClient).
  * Esta clase repite las comprobaciones que dependen de la aplicacion:
  *
- *  1. que nginx efectivamente haya verificado el certificado (SSL_CLIENT_VERIFY),
+ *  1. que el servidor web efectivamente haya verificado el certificado
+ *     (SSL_CLIENT_VERIFY),
  *  2. que el emisor sea el esperado (evita confusiones si se agregan CAs),
  *  3. que el certificado este vigente segun el reloj del API,
  *  4. que la identidad del dispositivo este en la lista blanca (si se configuro).

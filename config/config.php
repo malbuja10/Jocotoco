@@ -27,7 +27,7 @@ return [
     // require_mtls=false solo para desarrollo local sin certificados.
     'require_mtls' => true,
     // CN de la CA intermedia de step-ca que firma los certificados de
-    // dispositivo. Use "*" para aceptar cualquier emisor que nginx valide.
+    // dispositivo. Use "*" para aceptar cualquier emisor que valide Apache.
     'ca_issuer_common_name' => '*',
     // Lista blanca de dispositivos (SAN DNS o CN). Vacio = cualquier
     // certificado valido emitido por la CA. Acepta comodines: "*.sensores.local".

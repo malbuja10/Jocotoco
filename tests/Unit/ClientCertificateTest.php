@@ -26,7 +26,19 @@ final class ClientCertificateTest extends TestCase
         $this->tmp->remove();
     }
 
-    public function testInterpretaElCertificadoEscapadoDeNginx(): void
+    public function testInterpretaElCertificadoQueExportaApache(): void
+    {
+        // Apache con "SSLOptions +ExportCertData" entrega el PEM multilinea.
+        $pem = $this->ca->clientPem('rpi-yanacocha-01');
+        $certificate = ClientCertificate::fromPem($pem);
+
+        self::assertSame('rpi-yanacocha-01', $certificate->identity());
+        self::assertSame(['rpi-yanacocha-01'], $certificate->dnsNames);
+        self::assertStringContainsString('CN=Jocotoco Intermediate CA', $certificate->issuerDn);
+        self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $certificate->sha256Fingerprint);
+    }
+
+    public function testInterpretaElCertificadoUrlEncodedDeUnaSolaLinea(): void
     {
         $pem = $this->ca->clientPem('rpi-yanacocha-01');
         $certificate = ClientCertificate::fromPem(CertificateFactory::escape($pem));
@@ -40,7 +52,7 @@ final class ClientCertificateTest extends TestCase
     public function testInterpretaElCertificadoConLineasYTabulaciones(): void
     {
         $pem = $this->ca->clientPem('rpi-mindo-02');
-        // nginx entrega $ssl_client_cert con un tabulador al inicio de cada linea.
+        // Variante con un tabulador al inicio de cada linea.
         $conTabulaciones = implode("\n\t", explode("\n", $pem));
 
         $certificate = ClientCertificate::fromPem($conTabulaciones);
@@ -76,7 +88,7 @@ final class ClientCertificateTest extends TestCase
         ClientCertificate::fromPem('');
     }
 
-    public function testRechazaUnGuionQueNginxEnviaCuandoNoHayCertificado(): void
+    public function testRechazaUnGuionCuandoNoHayCertificado(): void
     {
         $this->expectException(HttpException::class);
         $this->expectExceptionCode(401);

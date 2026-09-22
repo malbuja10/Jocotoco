@@ -39,7 +39,7 @@ final class MtlsAuthenticatorTest extends TestCase
         self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $device->certificateFingerprint());
     }
 
-    public function testRechazaCuandoNginxNoVerificoElCertificado(): void
+    public function testRechazaCuandoElServidorWebNoVerificoElCertificado(): void
     {
         $this->expectException(HttpException::class);
         $this->expectExceptionCode(401);

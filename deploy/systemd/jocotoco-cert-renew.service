@@ -12,5 +12,5 @@ ExecStart=/usr/bin/step ca renew --force --expires-in 8h \
 ExecStartPost=/bin/chown root:jocotoco /etc/jocotoco/tls/servidor.crt /etc/jocotoco/tls/servidor.key
 ExecStartPost=/bin/chmod 0640 /etc/jocotoco/tls/servidor.crt /etc/jocotoco/tls/servidor.key
 # step ca renew devuelve 0 aunque no renueve; la recarga es idempotente.
-ExecStartPost=/bin/systemctl reload nginx
+ExecStartPost=/bin/systemctl reload apache2
 SuccessExitStatus=0

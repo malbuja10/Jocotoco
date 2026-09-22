@@ -6,7 +6,7 @@
 arecord  →  /var/lib/jocotoco/cola/<disp>-<marca>.wav      (Raspberry)
               │  .parcial mientras graba
               ▼
-jocotoco-enviar-audio  ──curl --cert/--key──►  nginx :443
+jocotoco-enviar-audio  ──curl --cert/--key──►  Apache :443
                                                  │  valida la cadena contra
                                                  │  la raiz de step-ca
                                                  ▼
@@ -41,15 +41,32 @@ sustituible por PSR-7/PSR-15 si el proyecto crece.
 
 ### La autenticacion se comprueba dos veces
 
-nginx valida la cadena y la aplicacion vuelve a verificar emisor, vigencia e
+Apache valida la cadena y la aplicacion vuelve a verificar emisor, vigencia e
 identidad. Es redundante a proposito:
 
-- si alguien despliega el API sin nginx delante (contenedor, prueba, otro
+- si alguien despliega el API sin Apache delante (contenedor, prueba, otro
   proxy), sigue exigiendo certificado;
-- `ssl_verify_client optional` es necesario para que `/v1/salud` responda al
+- `SSLVerifyClient optional` es necesario para que `/v1/salud` responda al
   monitoreo, y esa flexibilidad no debe convertirse en un API abierto;
 - la lista blanca y el CN del emisor son politica de la aplicacion, no del
-  servidor web, y cambian sin recargar nginx.
+  servidor web, y cambian sin recargar Apache.
+
+### Por que el mTLS se declara en el VirtualHost y no por directorio
+
+Apache 2.4 no implementa la autenticacion post-handshake de TLS 1.3, y en
+TLS 1.3 no existe renegociacion: un `SSLVerifyClient require` dentro de un
+`<Directory>` o `<Location>` solo funciona si la conexion cae a TLS 1.2. Por
+eso el certificado se solicita una sola vez, en el handshake inicial, con
+`SSLVerifyClient optional` a nivel de VirtualHost, y la decision de
+autorizacion se toma despues con `Require expr "%{SSL:SSL_CLIENT_VERIFY} ==
+'SUCCESS'"`, que no necesita renegociar nada. Se verifico que el esquema
+funciona igual en TLS 1.2 y en TLS 1.3.
+
+Por el mismo motivo las rutas se mapean a `index.php` con `AliasMatch` en
+lugar de `FallbackResource` o `mod_rewrite`: esas dos producen una
+redireccion interna, y la peticion interna se autoriza contra la URL nueva
+(`/index.php`), de modo que `<Location "/v1/salud">` dejaria de aplicarse y
+la sonda de salud empezaria a exigir certificado.
 
 La tolerancia de reloj (60 s por defecto) se aplica solo a `notBefore`: un
 certificado recien emitido puede llegar con fecha unos segundos adelante del
@@ -83,9 +100,9 @@ truncada, porque `Content-Length` puede llegar correcto y el cuerpo no.
 ### Streaming, no memoria
 
 El cuerpo binario se copia al archivo temporal en bloques de 256 KiB con un
-tope acumulado, y `fastcgi_request_buffering off` evita que nginx guarde otra
-copia. Una grabacion de 64 MiB se procesa con unos pocos MB de memoria en
-PHP. La descarga usa `fpassthru` por el mismo motivo.
+tope acumulado; `mod_proxy_fcgi` pasa el cuerpo a php-fpm en streaming, sin
+guardar otra copia. Una grabacion de 64 MiB se procesa con unos pocos MB de
+memoria en PHP. La descarga usa `fpassthru` por el mismo motivo.
 
 ### Escritura atomica y rutas saneadas
 
@@ -136,7 +153,8 @@ temporal (reintentar), que es la decision que realmente necesita tomar.
 - **Un solo nodo.** El almacenamiento es el sistema de archivos local y la
   base es SQLite. Para varios nodos hay que mover el audio a
   almacenamiento compartido (NFS, S3) y los metadatos a PostgreSQL.
-- **Sin CRL activa.** La configuracion de nginx trae `ssl_crl` comentado. Con
+- **Sin CRL activa.** La configuracion de Apache trae `SSLCARevocationFile`
+  comentado. Con
   certificados de 24 h no suele hacer falta; si su politica la exige,
   publique la CRL de step-ca y descomente esa linea.
 - **Sin control de cuota por dispositivo.** El API limita el tamano de cada

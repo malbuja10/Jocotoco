@@ -115,7 +115,7 @@ Los metadatos tambien pueden ir en la query string (`?sitio=Mindo`).
 | `201` | Almacenada. `Location` apunta al recurso, `ETag` es el sha256 |
 | `200` | El dispositivo ya habia subido ese mismo audio: se devuelve el existente con `Idempotent-Replay: true` y `duplicado: true` |
 | `400` | Cuerpo vacio, campo `audio` ausente, `X-Metadatos` invalido, fecha o metadato mal formado |
-| `401` | Sin certificado de cliente o nginx no lo verifico |
+| `401` | Sin certificado de cliente o Apache no lo verifico |
 | `403` | Certificado de otra CA, expirado, aun no vigente o dispositivo no autorizado |
 | `413` | Supera `JOCOTOCO_MAX_UPLOAD_BYTES` |
 | `415` | El contenido no es audio reconocible, o el formato esta deshabilitado, o contradice el `Content-Type` declarado |

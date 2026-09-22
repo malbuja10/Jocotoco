@@ -82,7 +82,7 @@ final class CertificateFactory
         return (new self($this->workingDirectory . '/ajena', 'Otra CA'))->clientPem($deviceName);
     }
 
-    /** PEM tal como nginx lo entrega en $ssl_client_escaped_cert. */
+    /** PEM en la variante URL-encoded de una sola linea (nginx). */
     public static function escape(string $pem): string
     {
         return rawurlencode($pem);

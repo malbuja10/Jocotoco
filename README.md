@@ -8,8 +8,8 @@ contrasenas, la identidad es el certificado y la renueva `step-cli` sola.
 ```
   Raspberry Pi                         Servidor Ubuntu 24.04
  ┌────────────────────┐               ┌────────────────────────────────────┐
- │ arecord            │               │ nginx  (TLS + ssl_verify_client)   │
- │   ↓                │   HTTPS       │   ↓  SSL_CLIENT_* via fastcgi      │
+ │ arecord            │               │ Apache (TLS + SSLVerifyClient)     │
+ │   ↓                │   HTTPS       │   ↓  SSL_CLIENT_* via mod_proxy_fcgi│
  │ cola en disco      │  mTLS  ─────► │ php8.3-fpm  →  public/index.php    │
  │   ↓                │               │   ↓                                │
  │ curl --cert --key  │               │ /var/lib/jocotoco/audio/<disp>/... │
@@ -21,7 +21,7 @@ contrasenas, la identidad es el certificado y la renueva `step-cli` sola.
 
 ## Que resuelve
 
-- **Autenticacion por certificado**: nginx valida la cadena contra la raiz de
+- **Autenticacion por certificado**: Apache valida la cadena contra la raiz de
   step-ca y la aplicacion vuelve a comprobar emisor, vigencia e identidad.
 - **Recepcion robusta de audio**: `multipart/form-data` o cuerpo binario, leido
   en bloques de 256 KiB (una grabacion de 64 MiB no se carga en memoria).
@@ -45,7 +45,7 @@ contrasenas, la identidad es el certificado y la renueva `step-cli` sola.
 | `bin/jocotoco` | CLI: `migrate`, `config`, `inspeccionar-cert`, `listar`, `purgar` |
 | `deploy/scripts/` | Instalacion de step-ca y del API en Ubuntu 24.04 |
 | `deploy/raspberry/` | Cliente del dispositivo (step-cli + curl + systemd) |
-| `deploy/nginx/`, `deploy/php/`, `deploy/systemd/` | Configuracion de servicio |
+| `deploy/apache/`, `deploy/php/`, `deploy/systemd/` | Configuracion de servicio |
 | `docs/` | API, despliegue, dispositivos y decisiones de diseno |
 
 ## Puesta en marcha (resumen)
@@ -121,8 +121,8 @@ php-fpm) sobre los valores de `config/config.php`:
 | `JOCOTOCO_ALLOW_DELETE` | `false` | Habilitar `DELETE` |
 | `JOCOTOCO_LOG_PATH` | `<data_dir>/logs/api.log` | Log JSON por linea (`stderr` para journald) |
 
-`JOCOTOCO_MAX_UPLOAD_BYTES` debe ir acompanado de `client_max_body_size` en
-nginx y de `upload_max_filesize`/`post_max_size` en php-fpm.
+`JOCOTOCO_MAX_UPLOAD_BYTES` debe ir acompanado de `LimitRequestBody` en
+Apache y de `upload_max_filesize`/`post_max_size` en php-fpm.
 
 ## Desarrollo local
 
@@ -151,7 +151,14 @@ vendor/bin/phpunit --testsuite integration
 Las pruebas levantan una CA propia (ECDSA P-256, igual que step-ca) y emiten
 certificados reales, de modo que la autenticacion se ejercita de verdad:
 certificado de otra CA, expirado, aun no vigente, fuera de la lista blanca,
-y los parametros `SSL_CLIENT_*` tal como los envia nginx.
+y los parametros `SSL_CLIENT_*` tal como los exporta Apache.
+
+El montaje de Apache 2.4.58 + php8.3-fpm de Ubuntu 24.04 se verifico a mano
+con una CA de prueba: sonda de salud sin certificado, `403` con
+`problem+json` en las rutas protegidas, subida binaria y multipart, descarga,
+aislamiento entre dispositivos, limite de tamano, rechazo de un certificado
+de otra CA en el handshake, y autenticacion de cliente tanto en TLS 1.2 como
+en TLS 1.3.
 
 ## Licencia
 

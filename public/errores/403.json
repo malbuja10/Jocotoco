@@ -1,0 +1,6 @@
+{
+  "type": "https://jocotoco.api/problems/acceso-denegado",
+  "title": "Acceso denegado",
+  "status": 403,
+  "detail": "Se requiere un certificado de cliente valido emitido por step-ca."
+}

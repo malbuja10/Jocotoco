@@ -58,7 +58,7 @@ abstract class ApiTestCase extends TestCase
 
     /**
      * Construye una peticion autenticada con un certificado de cliente,
-     * imitando los parametros SSL_CLIENT_* que envia nginx.
+     * imitando los parametros SSL_CLIENT_* que exporta el servidor web.
      *
      * @param array<string,string> $headers
      * @param array<string,string> $query

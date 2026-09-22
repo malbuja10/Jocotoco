@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
 # Emite (y programa la renovacion de) el certificado TLS del servidor del
-# API usando step-ca. Tambien copia la raiz de la CA donde nginx la espera
+# API usando step-ca. Tambien copia la raiz de la CA donde Apache la espera
 # para validar los certificados de las Raspberry.
 #
 # Uso: sudo ./03-emitir-cert-servidor.sh \
@@ -18,7 +18,7 @@ DOMINIO="api.jocotoco.local"
 CA_URL=""
 HUELLA=""
 DESTINO_TLS="/etc/jocotoco/tls"
-RAIZ_NGINX="/etc/step/certs/root_ca.crt"
+RAIZ_CA="/etc/step/certs/root_ca.crt"
 VIGENCIA="24h"
 
 while [[ $# -gt 0 ]]; do
@@ -54,7 +54,7 @@ fi
 
 echo "==> Confiando en la CA ${CA_URL}"
 step ca bootstrap --ca-url "$CA_URL" --fingerprint "$HUELLA" --force
-RAIZ_NGINX="$STEPPATH/certs/root_ca.crt"
+RAIZ_CA="$STEPPATH/certs/root_ca.crt"
 
 install -d -o root -g jocotoco -m 0750 "$DESTINO_TLS"
 
@@ -72,7 +72,7 @@ chmod 0640 "$DESTINO_TLS/servidor.key"
 
 echo "==> Publicando la raiz de la CA para la verificacion de clientes"
 install -d -m 0755 /etc/step/certs
-install -m 0644 "$RAIZ_NGINX" /etc/step/certs/root_ca.crt
+install -m 0644 "$RAIZ_CA" /etc/step/certs/root_ca.crt
 
 echo "==> Instalando la renovacion automatica (systemd timer)"
 install -m 0644 "$(dirname "$0")/../systemd/jocotoco-cert-renew.service" /etc/systemd/system/
@@ -80,7 +80,7 @@ install -m 0644 "$(dirname "$0")/../systemd/jocotoco-cert-renew.timer" /etc/syst
 systemctl daemon-reload
 systemctl enable --now jocotoco-cert-renew.timer
 
-nginx -t && systemctl reload nginx
+apache2ctl configtest && systemctl reload apache2
 
 cat <<RESUMEN
 
@@ -89,9 +89,9 @@ cat <<RESUMEN
 
    Hoja  : ${DESTINO_TLS}/servidor.crt
    Llave : ${DESTINO_TLS}/servidor.key
-   Raiz  : /etc/step/certs/root_ca.crt  (nginx valida clientes con esta)
+   Raiz  : /etc/step/certs/root_ca.crt  (Apache valida clientes con esta)
 
- Renovacion: jocotoco-cert-renew.timer (cada 8 h, recarga nginx).
+ Renovacion: jocotoco-cert-renew.timer (cada 8 h, recarga Apache).
  Verifique:  curl -sk https://${DOMINIO}/v1/salud | jq
 ===========================================================================
 RESUMEN
