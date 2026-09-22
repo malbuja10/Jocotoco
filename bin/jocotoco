@@ -1,0 +1,114 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Utilidad de linea de comandos del API.
+ *
+ *   bin/jocotoco migrate            Crea directorios y aplica migraciones
+ *   bin/jocotoco config             Muestra la configuracion efectiva
+ *   bin/jocotoco inspeccionar-cert <archivo.crt>
+ *                                   Muestra como el API interpretaria un
+ *                                   certificado emitido por step-ca
+ *   bin/jocotoco listar [dispositivo]
+ *                                   Ultimas grabaciones registradas
+ *   bin/jocotoco purgar <dias>      Elimina grabaciones mas antiguas que N dias
+ */
+
+use Jocotoco\Application;
+use Jocotoco\Security\ClientCertificate;
+
+require dirname(__DIR__) . '/vendor/autoload.php';
+
+$command = $argv[1] ?? 'ayuda';
+$app = Application::create();
+
+$salida = static function (string $texto): void {
+    fwrite(STDOUT, $texto . PHP_EOL);
+};
+
+switch ($command) {
+    case 'migrate':
+    case 'migrar':
+        $applied = $app->prepare();
+        $salida($applied === []
+            ? 'Sin migraciones pendientes.'
+            : 'Migraciones aplicadas: ' . implode(', ', $applied));
+        break;
+
+    case 'config':
+    case 'configuracion':
+        $salida(json_encode($app->config()->all(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        break;
+
+    case 'inspeccionar-cert':
+        $file = $argv[2] ?? '';
+        if ($file === '' || !is_file($file)) {
+            fwrite(STDERR, 'Uso: bin/jocotoco inspeccionar-cert <archivo.crt>' . PHP_EOL);
+            exit(1);
+        }
+
+        $certificate = ClientCertificate::fromPem((string) file_get_contents($file));
+        $salida(json_encode([
+            'identidad_detectada' => $certificate->identity(),
+            'certificado' => $certificate->toArray(),
+            'expirado' => $certificate->isExpired(time()),
+            'expira_en_segundos' => $certificate->secondsUntilExpiry(time()),
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        break;
+
+    case 'listar':
+        $device = $argv[2] ?? null;
+        $recordings = $app->repository()->listByDevice($device, 20);
+        if ($recordings === []) {
+            $salida('No hay grabaciones registradas.');
+            break;
+        }
+
+        foreach ($recordings as $recording) {
+            $salida(sprintf(
+                '%s  %-24s %-5s %9d B  %s',
+                $recording->id,
+                $recording->deviceId,
+                $recording->format,
+                $recording->sizeBytes,
+                $recording->receivedAt,
+            ));
+        }
+        break;
+
+    case 'purgar':
+        $dias = (int) ($argv[2] ?? 0);
+        if ($dias < 1) {
+            fwrite(STDERR, 'Uso: bin/jocotoco purgar <dias>' . PHP_EOL);
+            exit(1);
+        }
+
+        $limite = gmdate('Y-m-d\TH:i:s\Z', time() - $dias * 86400);
+        $borradas = 0;
+        foreach ($app->repository()->listByDevice(null, 100000) as $recording) {
+            if ($recording->receivedAt >= $limite) {
+                continue;
+            }
+
+            $app->storage()->delete($recording->relativePath);
+            $app->repository()->delete($recording->id);
+            $borradas++;
+        }
+        $salida(sprintf('Grabaciones eliminadas: %d (anteriores a %s)', $borradas, $limite));
+        break;
+
+    default:
+        $salida(<<<TXT
+        Jocotoco Audio API
+
+        Comandos:
+          migrate                          Crea directorios y aplica migraciones
+          config                           Muestra la configuracion efectiva
+          inspeccionar-cert <archivo.crt>  Interpreta un certificado de step-ca
+          listar [dispositivo]             Ultimas grabaciones
+          purgar <dias>                    Borra grabaciones antiguas
+        TXT);
+        break;
+}

@@ -1,0 +1,16 @@
+/vendor/
+/var/
+/data/
+.phpunit.result.cache
+.phpunit.cache/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+.env
+.env.local
+*.pem
+*.key
+*.crt
+!deploy/**/*.example
+.DS_Store
