@@ -1,0 +1,12 @@
+[Unit]
+Description=Renovar cada 8 horas el certificado TLS del API Jocotoco
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=8h
+RandomizedDelaySec=10min
+Persistent=true
+Unit=jocotoco-cert-renew.service
+
+[Install]
+WantedBy=timers.target

@@ -91,7 +91,10 @@ final class Response
         if (!headers_sent()) {
             http_response_code($this->status);
             foreach ($this->headers as $name => $value) {
-                header($name . ': ' . $value, true);
+                // El codigo se repite en cada cabecera a proposito: PHP
+                // convierte la respuesta en 302 al enviar "Location" si no
+                // se le indica explicitamente el estado.
+                header($name . ': ' . $value, true, $this->status);
             }
         }
 

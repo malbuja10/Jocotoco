@@ -1,0 +1,12 @@
+[Unit]
+Description=Enviar al API las grabaciones pendientes en la cola
+After=network-online.target jocotoco-renovar-cert.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/jocotoco/dispositivo.env
+ExecStart=/usr/local/bin/jocotoco-enviar-audio --cola
+# Un fallo de red no debe marcar la unidad como fallida de forma permanente:
+# el temporizador vuelve a intentarlo.
+SuccessExitStatus=0 2

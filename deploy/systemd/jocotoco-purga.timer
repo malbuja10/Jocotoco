@@ -1,0 +1,11 @@
+[Unit]
+Description=Purga diaria de grabaciones antiguas
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+Unit=jocotoco-purga.service
+
+[Install]
+WantedBy=timers.target

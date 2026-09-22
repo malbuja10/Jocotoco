@@ -27,7 +27,14 @@ final class Config
      */
     public static function fromEnvironment(array $defaults, ?array $env = null): self
     {
-        $env ??= array_merge($_ENV, $_SERVER);
+        // getenv() es la fuente mas fiable: con variables_order sin "E"
+        // $_ENV queda vacio, y bajo el servidor embebido de PHP $_SERVER se
+        // reemplaza por los datos de la peticion.
+        $env ??= array_merge(
+            array_filter(getenv(), is_string(...)),
+            array_filter($_ENV, is_string(...)),
+            array_filter($_SERVER, is_string(...)),
+        );
         $values = $defaults;
 
         foreach ($defaults as $key => $default) {

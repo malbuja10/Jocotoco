@@ -1,0 +1,13 @@
+[Unit]
+Description=Renovacion periodica del certificado de dispositivo
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=4h
+RandomizedDelaySec=15min
+# Si la Raspberry estuvo apagada, renueva en el siguiente arranque.
+Persistent=true
+Unit=jocotoco-renovar-cert.service
+
+[Install]
+WantedBy=timers.target

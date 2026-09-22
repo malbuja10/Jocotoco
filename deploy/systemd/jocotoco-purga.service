@@ -1,0 +1,11 @@
+[Unit]
+Description=Purga de grabaciones antiguas del API Jocotoco
+
+[Service]
+Type=oneshot
+User=jocotoco
+Group=jocotoco
+Environment=JOCOTOCO_DATA_DIR=/var/lib/jocotoco
+Environment=JOCOTOCO_LOG_PATH=/var/log/jocotoco/api.log
+# Ajuste el numero de dias segun su politica de retencion.
+ExecStart=/usr/bin/php /srv/jocotoco/bin/jocotoco purgar 365

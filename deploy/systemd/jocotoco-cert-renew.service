@@ -1,0 +1,16 @@
+[Unit]
+Description=Renovacion del certificado TLS del API Jocotoco (step-ca)
+Documentation=https://smallstep.com/docs/step-cli/reference/ca/renew
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=STEPPATH=/root/.step
+# --expires-in: renueva solo si le queda menos de 1/3 de vigencia.
+ExecStart=/usr/bin/step ca renew --force --expires-in 8h \
+    /etc/jocotoco/tls/servidor.crt /etc/jocotoco/tls/servidor.key
+ExecStartPost=/bin/chown root:jocotoco /etc/jocotoco/tls/servidor.crt /etc/jocotoco/tls/servidor.key
+ExecStartPost=/bin/chmod 0640 /etc/jocotoco/tls/servidor.crt /etc/jocotoco/tls/servidor.key
+# step ca renew devuelve 0 aunque no renueve; la recarga es idempotente.
+ExecStartPost=/bin/systemctl reload nginx
+SuccessExitStatus=0

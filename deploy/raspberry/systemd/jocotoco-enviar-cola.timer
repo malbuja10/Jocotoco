@@ -1,0 +1,12 @@
+[Unit]
+Description=Enviar la cola de grabaciones cada 10 minutos
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=10min
+RandomizedDelaySec=2min
+Persistent=true
+Unit=jocotoco-enviar-cola.service
+
+[Install]
+WantedBy=timers.target
