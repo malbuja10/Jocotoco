@@ -32,7 +32,7 @@ apt-get update -qq
 apt-get install -y -qq \
     nginx \
     php8.3-fpm php8.3-cli php8.3-sqlite3 php8.3-mbstring php8.3-curl php8.3-xml \
-    sqlite3 unzip curl rsync ca-certificates
+    sqlite3 unzip curl rsync jq ca-certificates
 
 php_version="$(php -r 'echo PHP_VERSION;')"
 echo "==> PHP instalado: $php_version"

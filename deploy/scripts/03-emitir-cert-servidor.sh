@@ -34,19 +34,27 @@ done
 [[ $EUID -eq 0 ]] || { echo "Ejecute este script con sudo." >&2; exit 1; }
 command -v step >/dev/null 2>&1 || { echo "Falta step-cli. Ejecute 01-instalar-step-ca.sh o instale step-cli." >&2; exit 1; }
 
+# El certificado y su renovacion automatica usan siempre este STEPPATH,
+# tambien cuando la CA corre en esta misma maquina: jocotoco-cert-renew.service
+# lo necesita inicializado para poder ejecutar "step ca renew".
 export STEPPATH="${STEPPATH:-/root/.step}"
 
-if [[ -n "$CA_URL" && -n "$HUELLA" ]]; then
-    echo "==> Confiando en la CA remota ${CA_URL}"
-    step ca bootstrap --ca-url "$CA_URL" --fingerprint "$HUELLA" --force
-    RAIZ_NGINX="$STEPPATH/certs/root_ca.crt"
-elif [[ -f /etc/step/certs/root_ca.crt ]]; then
-    echo "==> Usando la CA local de /etc/step"
-    export STEPPATH=/etc/step
-else
-    echo "Indique --ca-url y --huella, o instale step-ca en esta maquina." >&2
-    exit 1
+if [[ -z "$CA_URL" || -z "$HUELLA" ]]; then
+    if [[ -f /etc/step/config/ca.json ]]; then
+        command -v jq >/dev/null 2>&1 || { echo "Falta jq: sudo apt-get install -y jq" >&2; exit 1; }
+        echo "==> Tomando los datos de la CA local de /etc/step"
+        # "address" en ca.json ya viene como ":8443".
+        CA_URL="${CA_URL:-https://$(jq -r '.dnsNames[0]' /etc/step/config/ca.json)$(jq -r '.address' /etc/step/config/ca.json)}"
+        HUELLA="${HUELLA:-$(step certificate fingerprint /etc/step/certs/root_ca.crt)}"
+    else
+        echo "Indique --ca-url y --huella, o instale step-ca en esta maquina." >&2
+        exit 1
+    fi
 fi
+
+echo "==> Confiando en la CA ${CA_URL}"
+step ca bootstrap --ca-url "$CA_URL" --fingerprint "$HUELLA" --force
+RAIZ_NGINX="$STEPPATH/certs/root_ca.crt"
 
 install -d -o root -g jocotoco -m 0750 "$DESTINO_TLS"
 

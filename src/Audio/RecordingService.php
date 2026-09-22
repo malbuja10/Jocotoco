@@ -13,6 +13,7 @@ use Jocotoco\Storage\RecordingRepository;
 use Jocotoco\Support\Clock;
 use Jocotoco\Support\Logger;
 use Jocotoco\Support\Ulid;
+use PDOException;
 
 /**
  * Caso de uso principal: recibir una grabacion de un dispositivo autenticado.
@@ -84,7 +85,7 @@ final class RecordingService
 
             try {
                 $this->repository->save($recording);
-            } catch (\PDOException $exception) {
+            } catch (PDOException $exception) {
                 // La carrera de dos envios identicos la resuelve el indice unico.
                 $duplicate = $this->repository->findByChecksum($device->id, $sha256);
                 $this->storage->delete($relativePath);
