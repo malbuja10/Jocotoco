@@ -129,9 +129,50 @@ runuser -u "$USUARIO" -- env JOCOTOCO_DATA_DIR="$DATOS" JOCOTOCO_LOG_PATH="$LOGS
     php "$DESTINO/bin/jocotoco" migrate
 
 echo "==> Configurando php-fpm"
-install -m 0644 "$ORIGEN/deploy/php/jocotoco-pool.conf" /etc/php/8.3/fpm/pool.d/jocotoco.conf
+POOL=/etc/php/8.3/fpm/pool.d/jocotoco.conf
+
+# La plantilla del repositorio no conoce lo que el operador haya configurado
+# despues (el secreto de inscripcion, la lista blanca de dispositivos, el
+# ajuste de disable_functions que necesita el emisor de tokens...). Sin este
+# rescate, actualizar el codigo desactivaba silenciosamente la inscripcion.
+respaldo_pool=""
+if [[ -f "$POOL" ]]; then
+    respaldo_pool="${POOL}.$(date +%Y%m%d-%H%M%S).bak"
+    cp -a "$POOL" "$respaldo_pool"
+fi
+
+install -m 0644 "$ORIGEN/deploy/php/jocotoco-pool.conf" "$POOL"
 install -m 0644 "$ORIGEN/deploy/php/opcache-jocotoco.ini" /etc/php/8.3/fpm/conf.d/99-jocotoco.ini
-sed -i "s|env\[JOCOTOCO_LOG_PATH\] = .*|env[JOCOTOCO_LOG_PATH] = $LOGS/api.log|" /etc/php/8.3/fpm/pool.d/jocotoco.conf
+sed -i "s|env\[JOCOTOCO_LOG_PATH\] = .*|env[JOCOTOCO_LOG_PATH] = $LOGS/api.log|" "$POOL"
+
+if [[ -n "$respaldo_pool" ]]; then
+    preservadas=()
+
+    # Las variables JOCOTOCO_* que ya estaban ganan sobre la plantilla.
+    while IFS= read -r linea; do
+        clave="$(sed -n 's/^env\[\([A-Z_0-9]*\)\].*/\1/p' <<<"$linea")"
+        [[ -n "$clave" ]] || continue
+        sed -i "/^env\[${clave}\]/d" "$POOL"
+        printf '%s\n' "$linea" >> "$POOL"
+        preservadas+=("$clave")
+    done < <(grep -E '^env\[JOCOTOCO_[A-Z_0-9]+\]' "$respaldo_pool" || true)
+
+    # Y el disable_functions, si se habia ajustado (proc_open lo necesita el
+    # emisor de tokens de inscripcion).
+    anterior="$(grep -m1 '^php_admin_value\[disable_functions\]' "$respaldo_pool" || true)"
+    if [[ -n "$anterior" ]]; then
+        actual="$(grep -m1 '^php_admin_value\[disable_functions\]' "$POOL" || true)"
+        if [[ "$anterior" != "$actual" ]]; then
+            sed -i "s|^php_admin_value\[disable_functions\].*|${anterior}|" "$POOL"
+            preservadas+=("disable_functions")
+        fi
+    fi
+
+    if (( ${#preservadas[@]} > 0 )); then
+        echo "    Se conservo la configuracion existente: $(printf '%s ' "${preservadas[@]}")"
+        echo "    (respaldo del pool anterior en ${respaldo_pool})"
+    fi
+fi
 
 # Un sitio ya habilitado con el mismo ServerName y el mismo puerto gana
 # sobre el nuestro (Apache usa el primero que coincide), de modo que el API

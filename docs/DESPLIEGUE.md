@@ -337,6 +337,13 @@ sudo -u jocotoco sqlite3 /var/lib/jocotoco/jocotoco.sqlite \
 
 ### Actualizar el codigo
 
+`02-instalar-api.sh` reinstala el pool de php-fpm desde la plantilla del
+repositorio, pero **conserva** las variables `env[JOCOTOCO_*]` y el
+`disable_functions` que ya estuvieran configurados, y deja un respaldo del
+pool anterior con fecha. Sin eso, actualizar el codigo desactivaba en
+silencio cosas configuradas despues, como la inscripcion automatica.
+
+
 ```bash
 sudo deploy/scripts/02-instalar-api.sh --origen /ruta/al/repo   # rsync + composer + migrate
 sudo systemctl reload php8.3-fpm                                # OPcache no valida timestamps
