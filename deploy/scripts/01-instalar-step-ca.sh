@@ -35,24 +35,83 @@ fi
 
 arquitectura="$(dpkg --print-architecture)"
 
+if [[ -r /etc/os-release ]]; then
+    . /etc/os-release
+    if [[ "${VERSION_ID:-}" != "24.04" ]]; then
+        echo "    ADVERTENCIA: este script se probo en Ubuntu 24.04; aqui corre ${PRETTY_NAME:-desconocido}."
+        echo "    Revise que apache2 y php8.3 existan en los repositorios de su version."
+    fi
+fi
+
 echo "==> Instalando dependencias"
 apt-get update -qq
 apt-get install -y -qq curl ca-certificates jq
 
-# step-cli se publica en el repositorio smallstep/cli.
-if ! command -v step >/dev/null 2>&1; then
-    paquete="$(mktemp --suffix=.deb)"
-    curl -fsSL "https://github.com/smallstep/cli/releases/download/v${VERSION_STEP}/step-cli_${VERSION_STEP}_${arquitectura}.deb" -o "$paquete"
-    dpkg -i "$paquete"
-    rm -f "$paquete"
-fi
+# No basta con que el binario exista en el PATH: una descarga a medias o un
+# binario de otra arquitectura tambien "existe" y falla al ejecutarse con un
+# error confuso ("Syntax error: word unexpected"), porque el shell intenta
+# interpretarlo como script.
+utilizable() {
+    command -v "$1" >/dev/null 2>&1 && "$1" version >/dev/null 2>&1
+}
 
-if ! command -v step-ca >/dev/null 2>&1; then
+instalar_deb() {
+    local nombre="$1" url="$2" paquete
     paquete="$(mktemp --suffix=.deb)"
-    curl -fsSL "https://github.com/smallstep/certificates/releases/download/v${VERSION_STEP_CA}/step-ca_${VERSION_STEP_CA}_${arquitectura}.deb" -o "$paquete"
-    dpkg -i "$paquete"
+    echo "==> Descargando ${nombre}"
+    curl -fSL --retry 3 "$url" -o "$paquete"
+
+    # Un error de GitHub se descarga como HTML y dpkg lo rechaza; mejor
+    # detectarlo aqui que dejar un binario roto instalado.
+    if ! dpkg-deb --info "$paquete" >/dev/null 2>&1; then
+        rm -f "$paquete"
+        echo "ERROR: lo descargado no es un paquete .deb valido. Revise la version y la arquitectura:" >&2
+        echo "       ${url}" >&2
+        exit 1
+    fi
+
+    dpkg -i "$paquete" || apt-get install -y -f
     rm -f "$paquete"
+    hash -r
+}
+
+comprobar_utilizable() {
+    local nombre="$1" ruta
+    if utilizable "$nombre"; then
+        echo "==> ${nombre}: $("$nombre" version 2>/dev/null | head -1)"
+        return
+    fi
+
+    ruta="$(command -v "$nombre" 2>/dev/null || true)"
+    echo "ERROR: ${nombre} esta en ${ruta:-el PATH} pero no se ejecuta correctamente." >&2
+    echo "       Probablemente sea una instalacion manual incompleta que tapa la del paquete." >&2
+    echo "       Compruebe que es y apartelo:" >&2
+    echo "         file ${ruta:-/usr/local/bin/$nombre}" >&2
+    echo "         mv ${ruta:-/usr/local/bin/$nombre} ${ruta:-/usr/local/bin/$nombre}.roto" >&2
+    echo "       Despues vuelva a ejecutar este script." >&2
+    exit 1
+}
+
+# step-cli se publica en el repositorio smallstep/cli.
+if utilizable step; then
+    echo "==> step-cli ya instalado: $(step version | head -1)"
+else
+    if command -v step >/dev/null 2>&1; then
+        echo "    ADVERTENCIA: $(command -v step) existe pero no responde a 'step version'."
+        echo "    Se instalara el paquete oficial en /usr/bin."
+    fi
+    instalar_deb step-cli \
+        "https://github.com/smallstep/cli/releases/download/v${VERSION_STEP}/step-cli_${VERSION_STEP}_${arquitectura}.deb"
 fi
+comprobar_utilizable step
+
+if utilizable step-ca; then
+    echo "==> step-ca ya instalado: $(step-ca version | head -1)"
+else
+    instalar_deb step-ca \
+        "https://github.com/smallstep/certificates/releases/download/v${VERSION_STEP_CA}/step-ca_${VERSION_STEP_CA}_${arquitectura}.deb"
+fi
+comprobar_utilizable step-ca
 
 echo "==> Creando usuario de servicio ${USUARIO_CA}"
 id -u "$USUARIO_CA" >/dev/null 2>&1 || useradd --system --home "$STEPPATH" --shell /usr/sbin/nologin "$USUARIO_CA"
@@ -66,7 +125,7 @@ else
     chmod 600 "$clave_ca"
     openssl rand -base64 32 | tr -d '\n' > "$clave_ca"
 
-    STEPPATH="$STEPPATH" runuser -u "$USUARIO_CA" -- step ca init \
+    runuser -u "$USUARIO_CA" -- env STEPPATH="$STEPPATH" step ca init \
         --deployment-type=standalone \
         --name="$CA_NOMBRE" \
         --dns="$CA_DNS" \
@@ -78,7 +137,7 @@ else
     rm -f "$clave_ca"
 
     echo "==> Ampliando la vigencia maxima de los certificados de dispositivo a 24 h"
-    STEPPATH="$STEPPATH" runuser -u "$USUARIO_CA" -- \
+    runuser -u "$USUARIO_CA" -- env STEPPATH="$STEPPATH" \
         step ca provisioner update dispositivos \
             --x509-default-dur=24h --x509-max-dur=24h --x509-min-dur=5m \
             --admin-subject=step --password-file="$STEPPATH/password.txt" || \
