@@ -17,7 +17,9 @@
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
-VERSION_STEP="${VERSION_STEP:-0.28.2}"
+# Version de respaldo si la API de GitHub no responde; el script resuelve
+# primero la ultima publicada. Para fijarla: VERSION_STEP=0.30.6 ./bootstrap...
+VERSION_STEP="${VERSION_STEP:-0.30.6}"
 NOMBRE=""
 CA_URL=""
 HUELLA=""
@@ -54,13 +56,47 @@ echo "==> Instalando dependencias"
 apt-get update -qq
 apt-get install -y -qq curl ca-certificates jq
 
-if ! command -v step >/dev/null 2>&1; then
+# No basta con que el binario exista: una descarga a medias o un binario de
+# otra arquitectura tambien "existe" y falla con un error confuso del shell.
+if command -v step >/dev/null 2>&1 && step version >/dev/null 2>&1; then
+    echo "==> step-cli ya instalado: $(step version | head -1)"
+else
+    if command -v step >/dev/null 2>&1; then
+        echo "    ADVERTENCIA: $(command -v step) existe pero no responde a 'step version'."
+        echo "    Apartelo (mv $(command -v step) $(command -v step).roto) si el problema persiste."
+    fi
+
     arquitectura="$(dpkg --print-architecture)"   # arm64 en Raspberry Pi OS 64 bit
+    url="$(curl -fsSL --max-time 15 https://api.github.com/repos/smallstep/cli/releases/latest 2>/dev/null \
+        | jq -r --arg sufijo "_${arquitectura}.deb" \
+            '[.assets[]? | select(.name | endswith($sufijo)) | .browser_download_url] | first // empty' \
+            2>/dev/null || true)"
+    url="${url:-https://github.com/smallstep/cli/releases/download/v${VERSION_STEP}/step-cli_${VERSION_STEP}_${arquitectura}.deb}"
+
     paquete="$(mktemp --suffix=.deb)"
-    echo "==> Instalando step-cli v${VERSION_STEP} (${arquitectura})"
-    curl -fsSL "https://github.com/smallstep/cli/releases/download/v${VERSION_STEP}/step-cli_${VERSION_STEP}_${arquitectura}.deb" -o "$paquete"
-    dpkg -i "$paquete"
+    echo "==> Instalando step-cli (${arquitectura}) desde ${url}"
+    if ! curl -fSL --retry 3 "$url" -o "$paquete"; then
+        rm -f "$paquete"
+        echo "ERROR: no se pudo descargar step-cli. Versiones disponibles:" >&2
+        echo "       https://github.com/smallstep/cli/releases" >&2
+        exit 1
+    fi
+
+    if ! dpkg-deb --info "$paquete" >/dev/null 2>&1; then
+        rm -f "$paquete"
+        echo "ERROR: lo descargado no es un .deb valido: ${url}" >&2
+        exit 1
+    fi
+
+    dpkg -i "$paquete" || apt-get install -y -f
     rm -f "$paquete"
+    hash -r
+
+    if ! step version >/dev/null 2>&1; then
+        echo "ERROR: step-cli sigue sin funcionar tras instalar el paquete." >&2
+        echo "       Revise si otro binario lo tapa: command -v -a step" >&2
+        exit 1
+    fi
 fi
 
 echo "==> Creando ${DIR}"

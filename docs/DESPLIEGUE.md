@@ -10,7 +10,7 @@ los repositorios oficiales, sin necesidad de PPA).
 | Ubuntu | 24.04 LTS | — |
 | PHP | 8.3 (`php8.3-fpm`, `php8.3-sqlite3`, `php8.3-mbstring`, `php8.3-curl`, `php8.3-xml`) | repositorio Ubuntu |
 | Apache | 2.4.58 (`apache2`, con `ssl`, `proxy_fcgi`, `headers`, `alias`, `reqtimeout`, `rewrite`) | repositorio Ubuntu |
-| step-ca / step-cli | 0.28.x | paquetes `.deb` de smallstep |
+| step-ca / step-cli | 0.30.x (`step-ca` 0.30.2, `step-cli` 0.30.6 al momento de escribir) | paquetes `.deb` de smallstep |
 | Composer | 2.x | getcomposer.org |
 
 Decida antes los nombres DNS y que resuelvan desde los dispositivos:
@@ -27,7 +27,10 @@ separarlas para que un compromiso del API no exponga las llaves de la CA.
 sudo deploy/scripts/01-instalar-step-ca.sh --ca-dns ca.jocotoco.local
 ```
 
-El script instala `step-cli` y `step-ca`, crea el usuario de servicio `step`,
+El script resuelve la ultima version publicada de cada paquete con la API de
+GitHub (y cae a una version fijada si no hay respuesta; puede forzarla con
+`VERSION_STEP=x.y.z VERSION_STEP_CA=x.y.z ./01-instalar-step-ca.sh`).
+Instala `step-cli` y `step-ca`, crea el usuario de servicio `step`,
 inicializa la CA en `/etc/step` con un provisioner JWK llamado `dispositivos`,
 limita la vigencia de los certificados a 24 h e instala la unidad
 `step-ca.service`.

@@ -11,8 +11,11 @@
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
-VERSION_STEP="${VERSION_STEP:-0.28.2}"
-VERSION_STEP_CA="${VERSION_STEP_CA:-0.28.1}"
+# Versiones de respaldo, por si la API de GitHub no responde. El script
+# resuelve primero la ultima publicada; para fijar una concreta:
+#   VERSION_STEP=0.30.6 VERSION_STEP_CA=0.30.2 ./01-instalar-step-ca.sh
+VERSION_STEP="${VERSION_STEP:-0.30.6}"
+VERSION_STEP_CA="${VERSION_STEP_CA:-0.30.2}"
 CA_DNS="ca.jocotoco.local"
 CA_NOMBRE="Jocotoco"
 CA_PUERTO="8443"
@@ -55,11 +58,38 @@ utilizable() {
     command -v "$1" >/dev/null 2>&1 && "$1" version >/dev/null 2>&1
 }
 
+# Devuelve la URL del .deb de la ultima version publicada. Si la API de
+# GitHub no responde (sin salida a internet, limite de peticiones), cae a la
+# version fijada arriba. Asi el instalador no depende de un numero de
+# version escrito a mano, que es la causa tipica de un 404 al descargar.
+url_deb() {
+    local repo="$1" paquete="$2" version_fija="$3" url=""
+
+    url="$(curl -fsSL --max-time 15 "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null \
+        | jq -r --arg sufijo "_${arquitectura}.deb" \
+            '[.assets[]? | select(.name | endswith($sufijo)) | .browser_download_url] | first // empty' \
+            2>/dev/null || true)"
+
+    if [[ -n "$url" ]]; then
+        echo "$url"
+        return
+    fi
+
+    echo "https://github.com/${repo}/releases/download/v${version_fija}/${paquete}_${version_fija}_${arquitectura}.deb"
+}
+
 instalar_deb() {
-    local nombre="$1" url="$2" paquete
+    local nombre="$1" repo="$2" url="$3" paquete
     paquete="$(mktemp --suffix=.deb)"
-    echo "==> Descargando ${nombre}"
-    curl -fSL --retry 3 "$url" -o "$paquete"
+    echo "==> Descargando ${nombre} desde ${url}"
+    if ! curl -fSL --retry 3 "$url" -o "$paquete"; then
+        rm -f "$paquete"
+        echo "ERROR: no se pudo descargar ${nombre}." >&2
+        echo "       Compruebe que la version y la arquitectura (${arquitectura}) existen:" >&2
+        echo "       https://github.com/${repo}/releases" >&2
+        echo "       Puede fijar otra con: VERSION_STEP=x.y.z VERSION_STEP_CA=x.y.z $0" >&2
+        exit 1
+    fi
 
     # Un error de GitHub se descarga como HTML y dpkg lo rechaza; mejor
     # detectarlo aqui que dejar un binario roto instalado.
@@ -100,16 +130,14 @@ else
         echo "    ADVERTENCIA: $(command -v step) existe pero no responde a 'step version'."
         echo "    Se instalara el paquete oficial en /usr/bin."
     fi
-    instalar_deb step-cli \
-        "https://github.com/smallstep/cli/releases/download/v${VERSION_STEP}/step-cli_${VERSION_STEP}_${arquitectura}.deb"
+    instalar_deb step-cli smallstep/cli "$(url_deb smallstep/cli step-cli "$VERSION_STEP")"
 fi
 comprobar_utilizable step
 
 if utilizable step-ca; then
     echo "==> step-ca ya instalado: $(step-ca version | head -1)"
 else
-    instalar_deb step-ca \
-        "https://github.com/smallstep/certificates/releases/download/v${VERSION_STEP_CA}/step-ca_${VERSION_STEP_CA}_${arquitectura}.deb"
+    instalar_deb step-ca smallstep/certificates "$(url_deb smallstep/certificates step-ca "$VERSION_STEP_CA")"
 fi
 comprobar_utilizable step-ca
 
