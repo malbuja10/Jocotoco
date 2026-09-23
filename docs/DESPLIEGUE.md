@@ -99,6 +99,21 @@ pool.
 
 ### Si el servidor ya sirve otros sitios con Apache
 
+El instalador **no modifica el MPM** ni deshabilita sitios ajenos. Cambiar
+el MPM no se puede hacer en caliente: un `reload` posterior mata el
+servicio con `AH00534: The MPM cannot be changed during restart` y se lleva
+los sitios que ya estaban funcionando. Ademas un sitio que sirva PHP con
+`mod_php` necesita `prefork`. El API no se ve afectado: usa `php8.3-fpm` a
+traves de `mod_proxy_fcgi`, que funciona con cualquier MPM (verificado con
+`prefork` y con `event`).
+
+Por el mismo motivo, la conf de endurecimiento global
+(`jocotoco-endurecimiento.conf`) se instala pero **no se habilita** cuando
+hay otros sitios: cambia `ServerTokens`, `TraceEnable` y las `Options` de
+`<Directory />` para todo el servidor. Revisela y actives con
+`a2enconf jocotoco-endurecimiento` si le conviene.
+
+
 Dos VirtualHost con el mismo `ServerName` en el mismo puerto no conviven:
 Apache atiende con el primero que encuentra y el otro queda inerte. El
 instalador lo detecta y se detiene antes de configurar nada. Hay dos salidas:

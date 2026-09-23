@@ -136,9 +136,17 @@ if [[ -n "$choque" ]] && [[ "$PUERTO" == "443" ]]; then
 fi
 
 echo "==> Configurando Apache (${DOMINIO}:${PUERTO})"
-# MPM event + php-fpm por mod_proxy_fcgi: mod_php obligaria a usar prefork.
-a2dismod -q -f mpm_prefork 2>/dev/null || true
-a2enmod -q mpm_event ssl proxy_fcgi headers alias reqtimeout rewrite
+# El MPM NO se toca. Apache no admite cambiarlo en caliente: un
+# "systemctl reload" tras cambiarlo mata el servicio con
+#   AH00534: apache2: Configuration error: The MPM cannot be changed during restart.
+# y se lleva por delante los sitios que el servidor ya estuviera sirviendo.
+# Ademas, un servidor que sirva PHP con mod_php necesita prefork. Nada de
+# esto afecta al API: mod_proxy_fcgi funciona con cualquier MPM (verificado
+# con prefork y con event).
+mpm_actual="$(apache2ctl -M 2>/dev/null | grep -oE 'mpm_(event|worker|prefork)_module' | head -1 || true)"
+echo "    MPM en uso: ${mpm_actual:-desconocido} (no se modifica)"
+
+a2enmod -q ssl proxy_fcgi headers alias reqtimeout rewrite
 sed "s/api\.jocotoco\.local/$DOMINIO/g" "$ORIGEN/deploy/apache/jocotoco-api.conf" \
     > /etc/apache2/sites-available/jocotoco-api.conf
 
@@ -154,20 +162,31 @@ else
     rm -f /etc/apache2/conf-enabled/jocotoco-puerto.conf
 fi
 install -m 0644 "$ORIGEN/deploy/apache/jocotoco-endurecimiento.conf" /etc/apache2/conf-available/
-a2enconf -q jocotoco-endurecimiento
-grep -q 'ServerName' /etc/apache2/conf-available/jocotoco-endurecimiento.conf || \
-    echo "ServerName $DOMINIO" >> /etc/apache2/conf-available/jocotoco-endurecimiento.conf
+
+# El endurecimiento es global (ServerTokens, TraceEnable, Options en
+# <Directory />), asi que solo se habilita cuando este Apache es exclusivo
+# del API. En un servidor compartido queda instalado y a la vista, para que
+# el operador decida.
+otros_sitios="$(ls -1 /etc/apache2/sites-enabled/ 2>/dev/null | grep -v '^jocotoco-api' || true)"
+
+if [[ -z "$otros_sitios" ]]; then
+    grep -q 'ServerName' /etc/apache2/conf-available/jocotoco-endurecimiento.conf || \
+        echo "ServerName $DOMINIO" >> /etc/apache2/conf-available/jocotoco-endurecimiento.conf
+    a2enconf -q jocotoco-endurecimiento
+else
+    echo "    Endurecimiento global NO habilitado: este Apache sirve otros sitios."
+    echo "    Para revisarlo:  /etc/apache2/conf-available/jocotoco-endurecimiento.conf"
+    echo "    Para activarlo:  a2enconf jocotoco-endurecimiento"
+fi
 
 # El sitio NO se habilita aqui: su VirtualHost referencia el certificado del
 # servidor y la raiz de la CA, y Apache se niega a arrancar si esos archivos
 # no existen ("SSLCertificateFile: file ... does not exist or is empty").
 # Lo habilita 03-emitir-cert-servidor.sh, que es quien los crea.
-otros_sitios="$(ls -1 /etc/apache2/sites-enabled/ 2>/dev/null | grep -v '^jocotoco-api' || true)"
 if [[ -n "$otros_sitios" ]]; then
     echo "    NOTA: este Apache ya tiene otros sitios habilitados:"
     printf '          %s\n' $otros_sitios
-    echo "          03-emitir-cert-servidor.sh no los toca; revise que no haya"
-    echo "          conflicto de ServerName o de puertos con ${DOMINIO}."
+    echo "          No se tocan ni se deshabilitan en ningun paso."
 fi
 
 echo "==> Instalando rotacion de logs y purga programada"

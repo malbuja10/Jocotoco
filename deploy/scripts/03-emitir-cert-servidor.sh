@@ -134,9 +134,17 @@ if command -v ss >/dev/null 2>&1; then
 fi
 
 a2ensite -q jocotoco-api
-# El sitio por defecto se aparta solo si sigue habilitado; los demas vhosts
-# del servidor no se tocan.
-a2dissite -q 000-default default-ssl 2>/dev/null || true
+
+# El sitio por defecto de Apache solo se aparta cuando este servidor es
+# exclusivo del API. Si ya sirve otros vhosts, no se toca nada: podria ser
+# el que atiende ese trafico.
+otros="$(ls -1 /etc/apache2/sites-enabled/ 2>/dev/null \
+    | grep -vE '^jocotoco-api|^000-default|^default-ssl' || true)"
+if [[ -z "$otros" ]]; then
+    a2dissite -q 000-default default-ssl 2>/dev/null || true
+else
+    echo "    (se conservan los sitios ya habilitados: $(echo $otros | tr '\n' ' '))"
+fi
 
 apache2ctl configtest
 
