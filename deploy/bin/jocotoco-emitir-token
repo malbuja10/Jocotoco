@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# Emite un token de un solo uso de step-ca para un dispositivo.
+#
+# Lo invoca el API (usuario jocotoco) a traves de una regla de sudo acotada
+# a este unico comando, de modo que el API nunca tiene la contrasena del
+# provisioner de la CA.
+#
+#   jocotoco-emitir-token <nombre-dispositivo> [duracion]
+#
+# Imprime SOLO el token por la salida estandar. Cualquier otra cosa va a la
+# salida de error, y el API descarta lo que no tenga forma de JWT.
+# ---------------------------------------------------------------------------
+set -euo pipefail
+
+NOMBRE="${1:-}"
+DURACION="${2:-60m}"
+STEPPATH="${STEPPATH:-/etc/step}"
+PROVISIONER="${PROVISIONER:-dispositivos}"
+
+registrar() { logger -t jocotoco-emitir-token -- "$*" 2>/dev/null || true; }
+
+if [[ ! "$NOMBRE" =~ ^[a-z0-9]([a-z0-9.-]{0,62}[a-z0-9])?$ ]]; then
+    echo "nombre de dispositivo invalido" >&2
+    registrar "rechazado: nombre invalido (${NOMBRE})"
+    exit 2
+fi
+
+if [[ ! "$DURACION" =~ ^[0-9]+[smh]$ ]]; then
+    echo "duracion invalida" >&2
+    exit 2
+fi
+
+[[ -r "$STEPPATH/password.txt" ]] || { echo "no puedo leer $STEPPATH/password.txt" >&2; exit 3; }
+
+err="$(mktemp)"
+trap 'rm -f "$err"' EXIT
+
+# step escribe mensajes informativos en la salida de error; el token es la
+# unica linea con forma de JWT.
+token="$(runuser -u step -- env STEPPATH="$STEPPATH" step ca token "$NOMBRE" \
+            --provisioner "$PROVISIONER" \
+            --password-file "$STEPPATH/password.txt" \
+            --not-after "$DURACION" 2>"$err" \
+         | tr -d '\r' \
+         | grep -E '^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$' \
+         | tail -1 || true)"
+
+if [[ -z "$token" ]]; then
+    echo "step-ca no emitio el token: $(tr '\n' ' ' < "$err")" >&2
+    registrar "fallo la emision para ${NOMBRE}"
+    exit 4
+fi
+
+registrar "token emitido para ${NOMBRE} (vigencia ${DURACION})"
+printf '%s\n' "$token"

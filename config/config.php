@@ -52,6 +52,29 @@ return [
     'allowed_formats' => ['wav', 'flac', 'ogg', 'opus', 'mp3'],
     'recorded_at_future_tolerance_seconds' => 300,
 
+    // --- Inscripcion automatica de dispositivos --------------------------
+    // Un dispositivo sin certificado presenta un secreto de fabrica en
+    // POST /v1/inscripcion y recibe un token de un solo uso para step-ca.
+    // Viene deshabilitada: el secreto compartido vive en la imagen de todos
+    // los equipos, asi que actívela solo si la necesita.
+    'enrollment_enabled' => false,
+    // Minimo 16 caracteres. Definalo por entorno, nunca en el repositorio.
+    'enrollment_secret' => '',
+    // Lista de dispositivos autorizados a inscribirse. Vacio = cualquier
+    // nombre que cumpla el patron de hostname.
+    'enrollment_devices' => [],
+    // Tokens por dispositivo: el segundo cubre una reinstalacion.
+    'enrollment_max_tokens' => 2,
+    'enrollment_max_failures_per_ip' => 10,
+    'enrollment_failure_window_seconds' => 3600,
+    'enrollment_token_duration' => '60m',
+    // El API no tiene la contrasena de la CA: pide el token a un envoltorio
+    // con privilegios, autorizado por una regla de sudo acotada.
+    'enrollment_token_command' => '/usr/bin/sudo -n /usr/local/sbin/jocotoco-emitir-token',
+    // Se devuelven al dispositivo para que sepa a que CA dirigirse.
+    'ca_url' => '',
+    'ca_root_fingerprint' => '',
+
     // --- Observabilidad -------------------------------------------------
     // Ruta del log JSON, o "stderr" para delegar a php-fpm/journald.
     'log_path' => '',

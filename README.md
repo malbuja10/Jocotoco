@@ -46,7 +46,7 @@ contrasenas, la identidad es el certificado y la renueva `step-cli` sola.
 | `deploy/scripts/` | Instalacion de step-ca y del API en Ubuntu 24.04 (`05-activar-api.sh` activa el sitio con reversion automatica) |
 | `deploy/raspberry/` | Cliente del dispositivo (step-cli + curl + systemd) |
 | `deploy/apache/`, `deploy/php/`, `deploy/systemd/` | Configuracion de servicio |
-| `docs/` | API, despliegue, dispositivos y decisiones de diseno |
+| `docs/` | API, inscripcion, despliegue, dispositivos y decisiones de diseno |
 
 ## Puesta en marcha (resumen)
 
@@ -71,13 +71,15 @@ jocotoco-grabar-audio --segundos 60 --enviar
 ```
 
 El detalle esta en [`docs/DESPLIEGUE.md`](docs/DESPLIEGUE.md) y
-[`docs/RASPBERRY.md`](docs/RASPBERRY.md).
+[`docs/RASPBERRY.md`](docs/RASPBERRY.md). Si los dispositivos se dan de alta
+solos desde su propio codigo, vea [`docs/INSCRIPCION.md`](docs/INSCRIPCION.md).
 
 ## Endpoints
 
 | Metodo | Ruta | mTLS | Descripcion |
 |--------|------|------|-------------|
 | GET | `/v1/salud` | no | Estado del servicio (monitoreo) |
+| POST | `/v1/inscripcion` | no | Alta automatica: token de step-ca a cambio del secreto de fabrica (deshabilitada por defecto) |
 | GET | `/v1/yo` | si | Identidad y vigencia del certificado del dispositivo |
 | GET | `/v1/limites` | si | Tamano maximo, formatos y cabeceras aceptadas |
 | POST | `/v1/grabaciones` | si | Sube una grabacion |
@@ -120,6 +122,10 @@ php-fpm) sobre los valores de `config/config.php`:
 | `JOCOTOCO_ALLOWED_FORMATS` | `wav,flac,ogg,opus,mp3` | Formatos aceptados |
 | `JOCOTOCO_ALLOW_DELETE` | `false` | Habilitar `DELETE` |
 | `JOCOTOCO_LOG_PATH` | `<data_dir>/logs/api.log` | Log JSON por linea (`stderr` para journald) |
+| `JOCOTOCO_ENROLLMENT_ENABLED` | `false` | Habilita `POST /v1/inscripcion` |
+| `JOCOTOCO_ENROLLMENT_SECRET` | vacio | Secreto de fabrica (16 caracteres o mas) |
+| `JOCOTOCO_ENROLLMENT_DEVICES` | vacio | Dispositivos autorizados a inscribirse |
+| `JOCOTOCO_ENROLLMENT_MAX_TOKENS` | `2` | Tokens de inscripcion por dispositivo |
 
 `JOCOTOCO_MAX_UPLOAD_BYTES` debe ir acompanado de `LimitRequestBody` en
 Apache y de `upload_max_filesize`/`post_max_size` en php-fpm.

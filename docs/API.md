@@ -39,6 +39,16 @@ consulte sobre TLS. Devuelve `200` si la base y el almacenamiento responden,
 }
 ```
 
+## POST /v1/inscripcion
+
+Alta automatica de dispositivos: entrega un token de un solo uso de step-ca
+a cambio del secreto de fabrica. No exige certificado de cliente (el equipo
+que se inscribe todavia no tiene ninguno) y **viene deshabilitada**,
+respondiendo `404` mientras no se configure.
+
+El contrato completo, el cliente en Python y los limites del esquema estan
+en [`INSCRIPCION.md`](INSCRIPCION.md).
+
 ## GET /v1/yo
 
 Como ve el API al dispositivo. Es la forma recomendada de comprobar desde la

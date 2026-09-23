@@ -14,9 +14,14 @@ declare(strict_types=1);
  *   bin/jocotoco listar [dispositivo]
  *                                   Ultimas grabaciones registradas
  *   bin/jocotoco purgar <dias>      Elimina grabaciones mas antiguas que N dias
+ *   bin/jocotoco inscripciones      Estado del alta automatica por dispositivo
+ *   bin/jocotoco bloquear-inscripcion <dispositivo> [motivo]
+ *                                   Impide que ese dispositivo vuelva a
+ *                                   inscribirse (no toca la CA)
  */
 
 use Jocotoco\Application;
+use Jocotoco\Enrollment\EnrollmentRepository;
 use Jocotoco\Security\ClientCertificate;
 
 require dirname(__DIR__) . '/vendor/autoload.php';
@@ -99,6 +104,41 @@ switch ($command) {
         $salida(sprintf('Grabaciones eliminadas: %d (anteriores a %s)', $borradas, $limite));
         break;
 
+    case 'inscripciones':
+        $inscripciones = (new EnrollmentRepository($app->database()))->listAll();
+        if ($inscripciones === []) {
+            $salida('No hay inscripciones registradas.');
+            break;
+        }
+
+        foreach ($inscripciones as $fila) {
+            $salida(sprintf(
+                '%-28s tokens=%d %s  primera=%s  ultima=%s  ip=%s',
+                $fila['device_id'],
+                (int) $fila['tokens_issued'],
+                ((int) $fila['blocked'] === 1 ? '[BLOQUEADO]' : ''),
+                $fila['first_seen_at'],
+                $fila['last_seen_at'],
+                $fila['last_ip'] ?? '-',
+            ));
+        }
+        break;
+
+    case 'bloquear-inscripcion':
+        $dispositivo = $argv[2] ?? '';
+        if ($dispositivo === '') {
+            fwrite(STDERR, 'Uso: bin/jocotoco bloquear-inscripcion <dispositivo> [motivo]' . PHP_EOL);
+            exit(1);
+        }
+
+        (new EnrollmentRepository($app->database()))->block(
+            $dispositivo,
+            $argv[3] ?? 'bloqueado manualmente',
+            gmdate('Y-m-d\TH:i:s\Z'),
+        );
+        $salida(sprintf('El dispositivo %s ya no puede inscribirse.', $dispositivo));
+        break;
+
     default:
         $salida(<<<TXT
         Jocotoco Audio API
@@ -109,6 +149,8 @@ switch ($command) {
           inspeccionar-cert <archivo.crt>  Interpreta un certificado de step-ca
           listar [dispositivo]             Ultimas grabaciones
           purgar <dias>                    Borra grabaciones antiguas
+          inscripciones                    Estado del alta automatica
+          bloquear-inscripcion <disp>      Impide que se vuelva a inscribir
         TXT);
         break;
 }

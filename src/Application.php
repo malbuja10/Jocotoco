@@ -9,9 +9,13 @@ use Jocotoco\Audio\AudioValidator;
 use Jocotoco\Audio\PayloadReader;
 use Jocotoco\Audio\RecordingService;
 use Jocotoco\Config\Config;
+use Jocotoco\Controller\EnrollmentController;
 use Jocotoco\Controller\HealthController;
 use Jocotoco\Controller\IdentityController;
 use Jocotoco\Controller\RecordingsController;
+use Jocotoco\Enrollment\EnrollmentRepository;
+use Jocotoco\Enrollment\EnrollmentService;
+use Jocotoco\Enrollment\StepCaTokenIssuer;
 use Jocotoco\Exception\HttpException;
 use Jocotoco\Exception\StorageException;
 use Jocotoco\Http\Request;
@@ -199,10 +203,25 @@ final class Application
             $this->config->string('app_version'),
         );
         $identity = new IdentityController($this->repository, $this->clock);
+
+        $enrollment = new EnrollmentController(new EnrollmentService(
+            $this->config,
+            new EnrollmentRepository($this->database),
+            StepCaTokenIssuer::fromCommandLine(
+                (string) $this->config->get('enrollment_token_command'),
+                $this->config->string('enrollment_token_duration'),
+            ),
+            $this->clock,
+            $this->logger,
+        ));
         $recordings = new RecordingsController($this->service, $this->repository, $this->validator, $this->config);
 
         // Publica sobre TLS: permite chequeos de salud sin certificado.
         $router->get('/v1/salud', $health);
+
+        // Tambien publica, y por necesidad: el dispositivo que se inscribe
+        // todavia no tiene certificado con el que autenticarse.
+        $router->post('/v1/inscripcion', $enrollment);
 
         $router->get('/v1/yo', $this->authenticated($identity));
         $router->get('/v1/limites', $this->authenticated($recordings->limits(...)));
