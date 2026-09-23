@@ -7,8 +7,14 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 Environment=STEPPATH=/etc/jocotoco/step
-# Renueva solo si al certificado le queda menos de 8 horas de vigencia.
-ExecStart=/usr/bin/step ca renew --force --expires-in 8h \
+# Valor por defecto; dispositivo.env lo sobreescribe con un tercio de la
+# vigencia real del certificado (lo calcula el bootstrap).
+Environment=JOCOTOCO_RENOVAR_ANTES=8h
+EnvironmentFile=-/etc/jocotoco/dispositivo.env
+# Renueva solo si al certificado le queda menos de ese margen. El equipo
+# puede estar semanas sin conexion: cada intento fallido simplemente se
+# reintenta en el siguiente disparo del temporizador.
+ExecStart=/usr/bin/step ca renew --force --expires-in ${JOCOTOCO_RENOVAR_ANTES} \
     /etc/jocotoco/tls/dispositivo.crt /etc/jocotoco/tls/dispositivo.key
 ExecStartPost=/bin/chmod 0644 /etc/jocotoco/tls/dispositivo.crt
 ExecStartPost=/bin/chmod 0600 /etc/jocotoco/tls/dispositivo.key

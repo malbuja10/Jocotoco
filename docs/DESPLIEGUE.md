@@ -50,18 +50,25 @@ La contrasena de las llaves queda en `/etc/step/password.txt` (modo 0600,
 usuario `step`). Respaldela junto con `/etc/step/secrets/` fuera de la
 maquina: sin ella no se pueden emitir mas certificados.
 
-### Por que 24 horas
+### Vigencia de los certificados de dispositivo
 
-Un certificado corto hace innecesaria la revocacion: si un dispositivo se
-pierde, basta con no renovarle. `step ca renew` corre cada 4 h en la Raspberry
-y renueva cuando quedan menos de 8 h. Para cambiar la politica:
+Por defecto son 24 h, lo que hace innecesaria la revocacion: si un
+dispositivo se pierde, basta con no renovarle.
+
+Eso no sirve para equipos que pasan semanas sin conexion, porque step-ca
+solo renueva certificados todavia vigentes. Para esos casos:
 
 ```bash
-sudo -u step STEPPATH=/etc/step step ca provisioner update dispositivos \
-     --x509-default-dur=168h --x509-max-dur=168h \
-     --password-file /etc/step/password.txt
-sudo systemctl reload step-ca
+sudo ./07-vigencia-dispositivos.sh --dias 30
 ```
+
+El script ajusta los claims del provisioner en `ca.json`, respalda la
+configuracion, reinicia step-ca y **emite un certificado de prueba para
+comprobar que la vigencia es la pedida**, revirtiendo si no lo es. Con
+`--permitir-renovar-expirados` habilita `allowRenewalAfterExpiry`, util en
+campo pero a cambio de que la caducidad deje de ser el mecanismo de baja:
+use la lista blanca del API para eso. El detalle esta en
+[`RASPBERRY.md`](RASPBERRY.md), punto 7.
 
 ## 2. API
 

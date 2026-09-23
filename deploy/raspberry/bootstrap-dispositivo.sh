@@ -26,7 +26,10 @@ HUELLA=""
 TOKEN=""
 API_URL="https://api.jocotoco.local"
 DIR="/etc/jocotoco"
-VIGENCIA="24h"
+# Vacio = la vigencia que la CA tenga configurada por defecto. Para equipos
+# que pasan semanas sin conexion, ampliela en el servidor con
+# 07-vigencia-dispositivos.sh en lugar de forzarla aqui.
+VIGENCIA=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -112,15 +115,27 @@ echo "==> Confiando en la CA ${CA_URL}"
 step ca bootstrap --ca-url "$CA_URL" --fingerprint "$HUELLA" --force
 
 echo "==> Solicitando el certificado de ${NOMBRE}"
+VIGENCIA_ARGS=()
+[[ -n "$VIGENCIA" ]] && VIGENCIA_ARGS=(--not-after "$VIGENCIA")
+
 step ca certificate "$NOMBRE" \
     "$DIR/tls/dispositivo.crt" "$DIR/tls/dispositivo.key" \
     --token "$TOKEN" \
-    --not-after "$VIGENCIA" \
+    "${VIGENCIA_ARGS[@]}" \
     --force
 
 chmod 0644 "$DIR/tls/dispositivo.crt"
 chmod 0600 "$DIR/tls/dispositivo.key"
 install -m 0644 "$STEPPATH/certs/root_ca.crt" "$DIR/tls/raiz-ca.crt"
+
+# La renovacion se intenta cuando al certificado le queda menos de un tercio
+# de su vida. Con 30 dias de vigencia son 10 dias de margen: cualquier
+# ventana de conexion en ese periodo alcanza para renovar.
+vigencia_segundos=$(( $(date -d "$(openssl x509 -in "$DIR/tls/dispositivo.crt" -noout -enddate | cut -d= -f2)" +%s) \
+                    - $(date -d "$(openssl x509 -in "$DIR/tls/dispositivo.crt" -noout -startdate | cut -d= -f2)" +%s) ))
+renovar_antes_horas=$(( vigencia_segundos / 3600 / 3 ))
+(( renovar_antes_horas < 8 )) && renovar_antes_horas=8
+echo "==> Certificado de $(( vigencia_segundos / 86400 )) dias; se renovara cuando queden ${renovar_antes_horas} h"
 
 echo "==> Guardando la configuracion del cliente"
 cat > "$DIR/dispositivo.env" <<ENV
@@ -133,6 +148,8 @@ JOCOTOCO_CA=${DIR}/tls/raiz-ca.crt
 JOCOTOCO_COLA=/var/lib/jocotoco/cola
 JOCOTOCO_ENVIADAS=/var/lib/jocotoco/enviadas
 STEPPATH=${STEPPATH}
+# Umbral de renovacion del certificado (lo usa jocotoco-renovar-cert.service)
+JOCOTOCO_RENOVAR_ANTES=${renovar_antes_horas}h
 ENV
 chmod 0644 "$DIR/dispositivo.env"
 
@@ -162,8 +179,10 @@ cat <<RESUMEN
 ===========================================================================
  Dispositivo ${NOMBRE} listo.
 
- Certificado : ${DIR}/tls/dispositivo.crt  (vigencia ${VIGENCIA})
- Renovacion  : jocotoco-renovar-cert.timer (cada 4 h)
+ Certificado : ${DIR}/tls/dispositivo.crt  ($(( vigencia_segundos / 86400 )) dias)
+ Renovacion  : jocotoco-renovar-cert.timer (revisa cada 4 h; renueva cuando
+               queden menos de ${renovar_antes_horas} h, asi que basta con
+               que el equipo tenga conexion alguna vez en ese margen)
  Cola        : /var/lib/jocotoco/cola  ->  jocotoco-enviar-cola.timer
 
  Enviar una grabacion ahora:

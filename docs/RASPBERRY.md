@@ -36,8 +36,11 @@ sea alcanzable desde los dispositivos (cortafuegos, NAT).
 ## 3. Obtener el token en el servidor
 
 ```bash
-sudo deploy/scripts/04-registrar-dispositivo.sh rpi-yanacocha-01
+sudo deploy/scripts/04-registrar-dispositivo.sh rpi-yanacocha-01 --validez 60m
 ```
+
+`--validez` es la vigencia del **token de alta** (60 minutos por defecto),
+no la del certificado. El token es de un solo uso.
 
 El nombre que elija (`rpi-yanacocha-01`) queda como CN y SAN DNS del
 certificado y es la identidad con la que el API guarda las grabaciones:
@@ -46,8 +49,8 @@ hostname (minusculas, digitos, guiones y puntos).
 
 ## 4. Bootstrap del dispositivo
 
-Copie `deploy/raspberry/` a la Raspberry y ejecute, antes de que el token
-venza (5 minutos):
+Copie `deploy/raspberry/` a la Raspberry y ejecute antes de que venza el
+token:
 
 ```bash
 sudo ./bootstrap-dispositivo.sh \
@@ -143,7 +146,65 @@ Vigile el espacio en disco: 5 minutos de WAV 48 kHz 16 bit mono son unos
 comprimir antes de encolar (`flac --best grabacion.wav` reduce a la mitad sin
 perdida; el API acepta FLAC) o acortar el intervalo del envio.
 
-## 7. Renovacion del certificado
+## 7. Equipos sin conexion durante semanas
+
+Es el caso de una Raspberry en campo. Tres cosas que hay que resolver:
+
+**1. La vigencia del certificado.** step-ca solo renueva un certificado que
+todavia sea valido, asi que con 24 h un equipo incomunicado un dia queda
+fuera. En el servidor:
+
+```bash
+sudo ./07-vigencia-dispositivos.sh --dias 30
+```
+
+Los equipos ya registrados toman la vigencia nueva en su siguiente
+renovacion; para forzarla, en la Raspberry:
+
+```bash
+sudo STEPPATH=/etc/jocotoco/step step ca renew --force \
+     /etc/jocotoco/tls/dispositivo.crt /etc/jocotoco/tls/dispositivo.key
+```
+
+Si el equipo puede estar mas tiempo fuera del que dure cualquier vigencia
+razonable, agregue `--permitir-renovar-expirados`: activa
+`allowRenewalAfterExpiry` en la CA y el equipo puede renovar aunque su
+certificado ya haya caducado. **El precio**: quien tenga una copia del
+certificado y su llave puede renovar indefinidamente, asi que la baja real
+de un equipo perdido pasa a depender de la lista blanca del API
+(`JOCOTOCO_ALLOWED_DEVICES`), no de la caducidad.
+
+El temporizador de renovacion revisa cada 4 h y renueva cuando al
+certificado le queda menos de un tercio de su vida (10 dias con vigencia de
+30). Cada intento sin red simplemente falla y se reintenta luego: basta que
+el equipo tenga conexion **alguna vez** dentro de ese margen.
+
+**2. El reloj.** La Raspberry Pi no tiene reloj con bateria. Sin NTP arranca
+con una fecha equivocada y el handshake TLS falla (certificado "aun no
+valido" o "expirado"), aunque todo lo demas este bien. En campo:
+
+```bash
+# Raspberry Pi OS ya lo trae; en Ubuntu hay que instalarlo
+sudo apt-get install -y fake-hwclock
+sudo systemctl enable --now fake-hwclock
+```
+
+`fake-hwclock` guarda la hora al apagar y la restaura al arrancar, de modo
+que el reloj no retrocede a 1970. Para despliegues largos, lo fiable es un
+modulo RTC con bateria (DS3231, unos pocos dolares) y `sudo raspi-config` →
+*Interface Options* → I2C.
+
+**3. El espacio de la cola.** Todo lo grabado sin conexion se acumula en
+`/var/lib/jocotoco/cola`. Cinco minutos de WAV 48 kHz 16 bit mono son unos
+28 MB: grabando cada hora, un mes sin red son ~20 GB. Grabe en FLAC, reduzca
+la cadencia, o vigile el disco:
+
+```bash
+df -h /var/lib/jocotoco
+du -sh /var/lib/jocotoco/cola
+```
+
+## 8. Renovacion del certificado
 
 `jocotoco-renovar-cert.timer` corre cada 4 h y ejecuta
 `step ca renew --expires-in 8h`: renueva solo si al certificado le quedan
@@ -155,11 +216,12 @@ sudo systemctl start jocotoco-renovar-cert.service     # renovar ahora
 step certificate inspect /etc/jocotoco/tls/dispositivo.crt --short
 ```
 
-Si el certificado caduco estando el equipo apagado varios dias, la renovacion
-ya no es posible (step-ca exige un certificado vigente): pida un token nuevo y
-vuelva a ejecutar `bootstrap-dispositivo.sh`.
+Si el certificado caduco estando el equipo apagado, la renovacion ya no es
+posible (step-ca exige un certificado vigente, salvo que la CA tenga
+`allowRenewalAfterExpiry`, ver el punto 7): pida un token nuevo y vuelva a
+ejecutar `bootstrap-dispositivo.sh`.
 
-## 8. Diagnostico
+## 9. Diagnostico
 
 ```bash
 # Como me ve el API
