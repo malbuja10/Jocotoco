@@ -136,6 +136,13 @@ ss -ltnp | awk '{print $4, $6}'
 El instalador se detiene si el puerto elegido lo ocupa un proceso que no es
 Apache, antes de configurar nada.
 
+Con `--puerto`, la directiva `Listen` se escribe **dentro del archivo del
+sitio** (`sites-enabled` se incluye en el ambito global, asi que es valida
+ahi). De ese modo `a2dissite jocotoco-api` retira tambien el `Listen` y
+Apache vuelve a arrancar sin el API. Si estuviera en una conf aparte,
+deshabilitar el sitio dejaria a Apache intentando escuchar un puerto que no
+puede abrir, y no arrancaria ningun sitio del servidor.
+
 Con `--puerto` el instalador ajusta el VirtualHost, agrega su `Listen` en
 `conf-available/jocotoco-puerto.conf` y **elimina la redireccion del puerto
 80**, que pertenece al otro sitio. Las Raspberry usan entonces

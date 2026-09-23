@@ -167,16 +167,25 @@ a2enmod -q ssl proxy_fcgi headers alias reqtimeout rewrite
 sed "s/api\.jocotoco\.local/$DOMINIO/g" "$ORIGEN/deploy/apache/jocotoco-api.conf" \
     > /etc/apache2/sites-available/jocotoco-api.conf
 
+# Cualquier resto de la conf de puerto de una instalacion anterior se
+# retira: el Listen ahora vive dentro del propio sitio (ver abajo).
+a2disconf -q jocotoco-puerto 2>/dev/null || true
+rm -f /etc/apache2/conf-available/jocotoco-puerto.conf
+
 if [[ "$PUERTO" != "443" ]]; then
-    # Puerto propio: se ajusta el VirtualHost, se agrega su Listen y se
-    # elimina la redireccion del puerto 80, que pertenece al otro sitio.
+    # Puerto propio: se ajusta el VirtualHost y se elimina la redireccion
+    # del puerto 80, que pertenece al otro sitio.
     sed -i -e "s/^<VirtualHost \*:443>/<VirtualHost *:${PUERTO}>/" \
            -e "/=== INICIO REDIRECCION HTTP ===/,/=== FIN REDIRECCION HTTP ===/d" \
            /etc/apache2/sites-available/jocotoco-api.conf
-    echo "Listen ${PUERTO}" > /etc/apache2/conf-available/jocotoco-puerto.conf
-    a2enconf -q jocotoco-puerto
-else
-    rm -f /etc/apache2/conf-enabled/jocotoco-puerto.conf
+
+    # El Listen va DENTRO del archivo del sitio, no en una conf aparte:
+    # sites-enabled se incluye en el ambito global, asi que la directiva es
+    # valida ahi, y de este modo "a2dissite jocotoco-api" retira tambien el
+    # Listen. Con una conf separada, desactivar el sitio dejaba a Apache
+    # intentando escuchar un puerto ajeno y sin poder arrancar.
+    sed -i "1i # Puerto propio del API (se retira al deshabilitar el sitio).\nListen ${PUERTO}\n" \
+        /etc/apache2/sites-available/jocotoco-api.conf
 fi
 install -m 0644 "$ORIGEN/deploy/apache/jocotoco-endurecimiento.conf" /etc/apache2/conf-available/
 
