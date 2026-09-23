@@ -1,0 +1,13 @@
+[Unit]
+Description=Vaciar la cola de grabaciones cada 10 minutos
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=10min
+RandomizedDelaySec=2min
+# Si el equipo estuvo apagado, se ejecuta en el siguiente arranque.
+Persistent=true
+Unit=jocotoco-cliente.service
+
+[Install]
+WantedBy=timers.target

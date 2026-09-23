@@ -89,6 +89,23 @@ sudo -u jocotoco sqlite3 /var/lib/jocotoco/jocotoco.sqlite \
 
 ## Cliente en Python
 
+Si el dispositivo lo gestiona su propio programa en Python, en
+[`deploy/raspberry/python/`](../deploy/raspberry/python/) hay un modulo que
+cubre las tres cosas del ciclo de vida (alta, renovacion y envio con cola) y
+que se importa directamente:
+
+```python
+from jocotoco_client import ClienteJocotoco, ConfiguracionCliente
+
+cliente = ClienteJocotoco(ConfiguracionCliente.desde_entorno())
+cliente.asegurar_identidad()
+cliente.renovar_si_hace_falta()
+cliente.procesar_cola()
+```
+
+Su `README.md` tiene la instalacion y el temporizador de systemd. Lo que
+sigue es la version minima del alta, para integrarla en codigo existente.
+
 Esta es la version ajustada del cliente que ya existe en el dispositivo. Los
 cambios respecto al original, y por que:
 

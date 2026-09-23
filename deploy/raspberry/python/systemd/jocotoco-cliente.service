@@ -1,0 +1,22 @@
+[Unit]
+Description=Cliente Jocotoco: alta, renovacion y envio de grabaciones
+Documentation=https://github.com/malbuja10/Jocotoco/blob/main/docs/INSCRIPCION.md
+After=network-online.target time-sync.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=-/etc/jocotoco/dispositivo.env
+# "cola" asegura la identidad, renueva el certificado si toca y sube lo
+# pendiente. Devuelve 2 cuando quedan envios para el siguiente disparo, que
+# no es un fallo: en campo lo normal es no tener red.
+ExecStart=/usr/bin/python3 /opt/jocotoco/jocotoco_client.py cola
+SuccessExitStatus=0 2
+TimeoutStartSec=600
+
+# Endurecimiento: solo necesita sus propios directorios y el de datos.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/etc/jocotoco /var/lib/jocotoco
