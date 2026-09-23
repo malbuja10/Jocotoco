@@ -80,6 +80,17 @@ install -m 0644 "$(dirname "$0")/../systemd/jocotoco-cert-renew.timer" /etc/syst
 systemctl daemon-reload
 systemctl enable --now jocotoco-cert-renew.timer
 
+echo "==> Habilitando el sitio del API"
+if [[ ! -f /etc/apache2/sites-available/jocotoco-api.conf ]]; then
+    echo "ERROR: falta /etc/apache2/sites-available/jocotoco-api.conf; ejecute antes 02-instalar-api.sh." >&2
+    exit 1
+fi
+
+a2ensite -q jocotoco-api
+# El sitio por defecto se aparta solo si sigue habilitado; los demas vhosts
+# del servidor no se tocan.
+a2dissite -q 000-default default-ssl 2>/dev/null || true
+
 apache2ctl configtest && systemctl reload apache2
 
 cat <<RESUMEN

@@ -27,8 +27,35 @@ done
 
 [[ $EUID -eq 0 ]] || { echo "Ejecute este script con sudo." >&2; exit 1; }
 
-echo "==> Instalando PHP 8.3, Apache y utilidades"
+if [[ -r /etc/os-release ]]; then
+    . /etc/os-release
+    if [[ "${VERSION_ID:-}" != "24.04" ]]; then
+        echo "    ADVERTENCIA: este script se probo en Ubuntu 24.04; aqui corre ${PRETTY_NAME:-desconocido}."
+    fi
+fi
+
+echo "==> Comprobando la disponibilidad de los paquetes"
 apt-get update -qq
+
+faltan=()
+for paquete in apache2 php8.3-fpm php8.3-cli php8.3-sqlite3 php8.3-mbstring; do
+    politica="$(apt-cache policy "$paquete" 2>/dev/null || true)"
+    if [[ -z "$politica" ]] || grep -q 'Candidate: (none)' <<<"$politica"; then
+        faltan+=("$paquete")
+    fi
+done
+
+if (( ${#faltan[@]} > 0 )); then
+    echo "ERROR: estos paquetes no existen en los repositorios de este sistema:" >&2
+    printf '         %s\n' "${faltan[@]}" >&2
+    echo "       Ubuntu 24.04 los trae en los repositorios oficiales. En 22.04 o" >&2
+    echo "       anterior, PHP 8.3 requiere el PPA de Ondrej Sury:" >&2
+    echo "         add-apt-repository -y ppa:ondrej/php && apt-get update" >&2
+    echo "       Revise tambien: apt-cache policy apache2 php8.3-fpm" >&2
+    exit 1
+fi
+
+echo "==> Instalando PHP 8.3, Apache y utilidades"
 apt-get install -y -qq \
     apache2 \
     php8.3-fpm php8.3-cli php8.3-sqlite3 php8.3-mbstring php8.3-curl php8.3-xml \
@@ -94,13 +121,21 @@ a2enmod -q mpm_event ssl proxy_fcgi headers alias reqtimeout rewrite
 sed "s/api\.jocotoco\.local/$DOMINIO/g" "$ORIGEN/deploy/apache/jocotoco-api.conf" \
     > /etc/apache2/sites-available/jocotoco-api.conf
 install -m 0644 "$ORIGEN/deploy/apache/jocotoco-endurecimiento.conf" /etc/apache2/conf-available/
-a2ensite -q jocotoco-api
 a2enconf -q jocotoco-endurecimiento
-a2dissite -q 000-default default-ssl 2>/dev/null || true
-# La conf global del paquete php8.3-fpm apunta al pool "www"; este sitio
-# declara su propio SetHandler hacia el socket del pool jocotoco.
 grep -q 'ServerName' /etc/apache2/conf-available/jocotoco-endurecimiento.conf || \
     echo "ServerName $DOMINIO" >> /etc/apache2/conf-available/jocotoco-endurecimiento.conf
+
+# El sitio NO se habilita aqui: su VirtualHost referencia el certificado del
+# servidor y la raiz de la CA, y Apache se niega a arrancar si esos archivos
+# no existen ("SSLCertificateFile: file ... does not exist or is empty").
+# Lo habilita 03-emitir-cert-servidor.sh, que es quien los crea.
+otros_sitios="$(ls -1 /etc/apache2/sites-enabled/ 2>/dev/null | grep -v '^jocotoco-api' || true)"
+if [[ -n "$otros_sitios" ]]; then
+    echo "    NOTA: este Apache ya tiene otros sitios habilitados:"
+    printf '          %s\n' $otros_sitios
+    echo "          03-emitir-cert-servidor.sh no los toca; revise que no haya"
+    echo "          conflicto de ServerName o de puertos con ${DOMINIO}."
+fi
 
 echo "==> Instalando rotacion de logs y purga programada"
 install -m 0644 "$ORIGEN/deploy/systemd/jocotoco-purga.service" /etc/systemd/system/
@@ -119,7 +154,14 @@ ROTATE
 
 systemctl daemon-reload
 systemctl restart php8.3-fpm
-apache2ctl configtest
+
+if [[ -s /etc/jocotoco/tls/servidor.crt && -s /etc/step/certs/root_ca.crt ]]; then
+    apache2ctl configtest
+    systemctl reload apache2
+else
+    echo "==> Apache queda configurado pero el sitio aun no esta habilitado:"
+    echo "    faltan el certificado del servidor y la raiz de la CA."
+fi
 
 cat <<RESUMEN
 
@@ -130,7 +172,8 @@ cat <<RESUMEN
  Logs       : ${LOGS}/api.log
  Dominio    : ${DOMINIO}
 
- Falta emitir el certificado TLS del servidor con step-ca:
+ El sitio de Apache esta en sites-available pero TODAVIA NO habilitado:
+ lo habilita el paso siguiente, que emite el certificado TLS con step-ca:
 
    sudo ./03-emitir-cert-servidor.sh --dominio ${DOMINIO} \\
         --ca-url https://ca.jocotoco.local:8443 --huella <HUELLA_RAIZ>

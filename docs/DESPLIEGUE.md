@@ -78,8 +78,17 @@ Hace lo siguiente:
 - copia el codigo a `/srv/jocotoco` e instala dependencias sin `--dev`;
 - aplica las migraciones (`bin/jocotoco migrate`);
 - habilita MPM event y los modulos de Apache necesarios, instala el pool de
-  php-fpm, el `.ini` de OPcache, el sitio y la conf de endurecimiento de
-  Apache, la rotacion de logs y el temporizador de purga.
+  php-fpm, el `.ini` de OPcache, la conf de endurecimiento, la rotacion de
+  logs y el temporizador de purga.
+
+Antes de instalar nada comprueba que `apache2` y los paquetes `php8.3-*`
+existan en los repositorios del sistema, y se detiene con instrucciones si
+no (en Ubuntu 22.04 o anterior PHP 8.3 necesita el PPA de Ondrej Sury).
+
+El VirtualHost queda en `sites-available` pero **no se habilita todavia**:
+referencia el certificado del servidor y la raiz de la CA, y Apache se niega
+a arrancar mientras esos archivos no existan. Lo habilita el paso 3, que es
+quien los crea.
 
 Dos usuarios distintos leen el arbol de codigo: php-fpm corre como
 `jocotoco` y Apache como `www-data`. Por eso `/srv/jocotoco` queda de
@@ -122,8 +131,10 @@ sudo deploy/scripts/03-emitir-cert-servidor.sh \
 ```
 
 Emite la hoja del servidor en `/etc/jocotoco/tls/`, publica la raiz en
-`/etc/step/certs/root_ca.crt` (la que Apache usa para **validar clientes**) y
-activa `jocotoco-cert-renew.timer`, que renueva cada 8 h y recarga Apache.
+`/etc/step/certs/root_ca.crt` (la que Apache usa para **validar clientes**),
+habilita el sitio con `a2ensite`, aparta `000-default` si seguia activo (no
+toca otros vhosts del servidor) y activa `jocotoco-cert-renew.timer`, que
+renueva cada 8 h y recarga Apache.
 
 ```bash
 sudo apache2ctl configtest && sudo systemctl reload apache2
