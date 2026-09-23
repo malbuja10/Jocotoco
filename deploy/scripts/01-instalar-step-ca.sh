@@ -48,7 +48,7 @@ fi
 
 echo "==> Instalando dependencias"
 apt-get update -qq
-apt-get install -y -qq curl ca-certificates jq
+apt-get install -y -qq curl ca-certificates jq file
 
 # No basta con que el binario exista en el PATH: una descarga a medias o un
 # binario de otra arquitectura tambien "existe" y falla al ejecutarse con un
@@ -57,6 +57,30 @@ apt-get install -y -qq curl ca-certificates jq
 utilizable() {
     command -v "$1" >/dev/null 2>&1 && "$1" version >/dev/null 2>&1
 }
+
+# Se revisan los dos binarios antes de descargar nada, para informar de todos
+# los estorbos de una vez en lugar de uno por ejecucion.
+echo "==> Comprobando binarios preexistentes"
+rotos=()
+for binario in step step-ca; do
+    ruta="$(command -v "$binario" 2>/dev/null || true)"
+    [[ -n "$ruta" ]] || continue
+    "$binario" version >/dev/null 2>&1 || rotos+=("$ruta")
+done
+
+if (( ${#rotos[@]} > 0 )); then
+    echo "ERROR: hay binarios de step en el PATH que no se ejecutan:" >&2
+    for ruta in "${rotos[@]}"; do
+        echo "         ${ruta}  ->  $(file -b "$ruta" 2>/dev/null | cut -c1-70)" >&2
+    done
+    echo "       Suelen ser instalaciones manuales incompletas que tapan la del" >&2
+    echo "       paquete oficial (/usr/local/bin va antes que /usr/bin en el PATH)." >&2
+    echo "       Apartelos y vuelva a ejecutar este script:" >&2
+    for ruta in "${rotos[@]}"; do
+        echo "         mv ${ruta} ${ruta}.roto" >&2
+    done
+    exit 1
+fi
 
 # Devuelve la URL del .deb de la ultima version publicada. Si la API de
 # GitHub no responde (sin salida a internet, limite de peticiones), cae a la
