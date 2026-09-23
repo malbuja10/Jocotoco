@@ -41,8 +41,7 @@ y la huella de la CA en su propia configuracion.
 | `400` | Cuerpo no es JSON, o `device_id` no es un hostname en minusculas | Corregir el cliente; no reintentar |
 | `403` | Secreto incorrecto, dispositivo fuera de la lista, o bloqueado | No reintentar: requiere intervencion |
 | `404` | La inscripcion automatica esta deshabilitada | No reintentar |
-| `409` | El dispositivo agoto sus tokens | Pedir un token manual al operador |
-| `429` | Demasiados intentos fallidos desde esa IP | Esperar (ventana de 1 h) |
+| `429` | Demasiados tokens para ese dispositivo, o demasiados intentos fallidos desde esa IP | Esperar (ventana de 1 h) o pedir el reinicio al operador |
 | `500` | La CA no pudo emitir el token | Reintentar con espera progresiva |
 
 Se aceptan tambien las claves `dispositivo` y `secreto_fabrica` como
@@ -62,7 +61,12 @@ sudo ./08-habilitar-inscripcion.sh --generar-secreto --dominio dev.midominio.com
 ```
 
 Opcionalmente, `--dispositivos "rpi-yanacocha-01,rpi-mindo-02"` restringe
-quien puede inscribirse, y `--max-tokens N` cambia el tope por dispositivo.
+quien puede inscribirse, y `--max-tokens N` cambia cuantos tokens puede
+pedir un dispositivo **por hora** (5 por defecto).
+
+El tope es por ventana de tiempo, no de por vida: el token se gasta aunque
+el `step ca certificate` del dispositivo falle despues, y un equipo no debe
+quedarse fuera por dos intentos con un error de configuracion.
 
 El script instala un envoltorio con privilegios y una regla de `sudo`
 acotada a ese unico comando, de modo que **el API nunca tiene la contrasena
@@ -75,6 +79,9 @@ bloqueado al terminar.
 ```bash
 sudo -u jocotoco php /srv/jocotoco/bin/jocotoco inscripciones
 sudo -u jocotoco php /srv/jocotoco/bin/jocotoco bloquear-inscripcion rpi-perdida "equipo extraviado"
+
+# Le devuelve la posibilidad de inscribirse (desbloquea y olvida sus tokens)
+sudo -u jocotoco php /srv/jocotoco/bin/jocotoco reiniciar-inscripcion rpi-yanacocha-01
 ```
 
 Cada intento, aceptado o no, queda en la tabla `enrollment_attempts` con IP

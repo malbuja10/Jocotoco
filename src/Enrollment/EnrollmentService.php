@@ -22,8 +22,10 @@ use Jocotoco\Support\Logger;
  *  - viene deshabilitada; hay que activarla a proposito,
  *  - el nombre del dispositivo debe cumplir un patron y, si se configura una
  *    lista, estar en ella,
- *  - cada dispositivo tiene un tope de tokens (2 por defecto): el segundo
- *    cubre una reinstalacion, no una fabrica de identidades,
+ *  - cada dispositivo tiene un tope de tokens POR VENTANA DE TIEMPO (5 por
+ *    hora): frena el abuso sin dejar fuera a un equipo cuyo primer intento
+ *    fallo despues de recibir el token (el token se gasta aunque el
+ *    "step ca certificate" posterior no funcione),
  *  - un dispositivo puede bloquearse sin tocar la CA,
  *  - se limita el numero de intentos fallidos por IP,
  *  - todo intento, aceptado o no, queda registrado con IP y motivo.
@@ -108,12 +110,24 @@ final class EnrollmentService
         }
 
         $tope = $this->config->int('enrollment_max_tokens');
-        $emitidos = (int) ($estado['tokens_issued'] ?? 0);
+        $ventanaTokens = $this->config->int('enrollment_token_window_seconds');
+        $desdeTokens = gmdate('Y-m-d\TH:i:s\Z', $this->clock->now() - $ventanaTokens);
+        $emitidosVentana = $this->repository->issuedSince($deviceId, $desdeTokens);
 
-        if ($emitidos >= $tope) {
-            $rechazar(409, sprintf('tope de tokens alcanzado (%d de %d)', $emitidos, $tope), 'tope-alcanzado',
-                'Este dispositivo ya agoto sus tokens de inscripcion; pida uno manualmente.');
+        if ($emitidosVentana >= $tope) {
+            $rechazar(
+                429,
+                sprintf('tope de tokens por ventana alcanzado (%d en %d s)', $emitidosVentana, $ventanaTokens),
+                'tope-alcanzado',
+                sprintf(
+                    'Este dispositivo ya pidio %d tokens en los ultimos %d minutos; espere o pida uno manualmente.',
+                    $emitidosVentana,
+                    intdiv($ventanaTokens, 60),
+                ),
+            );
         }
+
+        $emitidos = (int) ($estado['tokens_issued'] ?? 0);
 
         try {
             $token = $this->issuer->issue($deviceId);
@@ -144,7 +158,8 @@ final class EnrollmentService
             'expira_en' => $this->config->string('enrollment_token_duration'),
             'ca_url' => $this->config->get('ca_url') ?: null,
             'huella_raiz' => $this->config->get('ca_root_fingerprint') ?: null,
-            'tokens_restantes' => $tope - ($emitidos + 1),
+            'tokens_restantes' => $tope - ($emitidosVentana + 1),
+            'tokens_emitidos_en_total' => $emitidos + 1,
         ];
     }
 }

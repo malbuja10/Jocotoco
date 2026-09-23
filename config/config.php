@@ -63,8 +63,12 @@ return [
     // Lista de dispositivos autorizados a inscribirse. Vacio = cualquier
     // nombre que cumpla el patron de hostname.
     'enrollment_devices' => [],
-    // Tokens por dispositivo: el segundo cubre una reinstalacion.
-    'enrollment_max_tokens' => 2,
+    // Tokens por dispositivo y por ventana de tiempo. El tope no es de por
+    // vida a proposito: el token se gasta aunque el "step ca certificate"
+    // del dispositivo falle despues, y un equipo no debe quedar fuera por
+    // dos intentos con un error de configuracion.
+    'enrollment_max_tokens' => 5,
+    'enrollment_token_window_seconds' => 3600,
     'enrollment_max_failures_per_ip' => 10,
     'enrollment_failure_window_seconds' => 3600,
     'enrollment_token_duration' => '60m',

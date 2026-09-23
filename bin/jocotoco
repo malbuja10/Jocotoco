@@ -18,6 +18,9 @@ declare(strict_types=1);
  *   bin/jocotoco bloquear-inscripcion <dispositivo> [motivo]
  *                                   Impide que ese dispositivo vuelva a
  *                                   inscribirse (no toca la CA)
+ *   bin/jocotoco reiniciar-inscripcion <dispositivo>
+ *                                   Lo desbloquea y olvida sus tokens, para
+ *                                   que pueda inscribirse de nuevo
  */
 
 use Jocotoco\Application;
@@ -139,6 +142,17 @@ switch ($command) {
         $salida(sprintf('El dispositivo %s ya no puede inscribirse.', $dispositivo));
         break;
 
+    case 'reiniciar-inscripcion':
+        $dispositivo = $argv[2] ?? '';
+        if ($dispositivo === '') {
+            fwrite(STDERR, 'Uso: bin/jocotoco reiniciar-inscripcion <dispositivo>' . PHP_EOL);
+            exit(1);
+        }
+
+        (new EnrollmentRepository($app->database()))->reset($dispositivo);
+        $salida(sprintf('El dispositivo %s puede inscribirse de nuevo.', $dispositivo));
+        break;
+
     default:
         $salida(<<<TXT
         Jocotoco Audio API
@@ -151,6 +165,7 @@ switch ($command) {
           purgar <dias>                    Borra grabaciones antiguas
           inscripciones                    Estado del alta automatica
           bloquear-inscripcion <disp>      Impide que se vuelva a inscribir
+          reiniciar-inscripcion <disp>     Le devuelve la posibilidad de inscribirse
         TXT);
         break;
 }

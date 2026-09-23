@@ -54,6 +54,34 @@ final class EnrollmentRepository
         ]);
     }
 
+    /** Tokens efectivamente emitidos a un dispositivo desde una fecha. */
+    public function issuedSince(string $deviceId, string $desde): int
+    {
+        $statement = $this->database->connection()->prepare(
+            "SELECT COUNT(*) FROM enrollment_attempts
+             WHERE device_id = :id AND result = 'emitido' AND created_at >= :desde",
+        );
+        $statement->execute([':id' => $deviceId, ':desde' => $desde]);
+
+        return (int) $statement->fetchColumn();
+    }
+
+    /**
+     * Devuelve al dispositivo la posibilidad de inscribirse: lo desbloquea y
+     * olvida los tokens que se le emitieron. Los intentos rechazados se
+     * conservan, que son los que interesa auditar.
+     */
+    public function reset(string $deviceId): void
+    {
+        $pdo = $this->database->connection();
+
+        $borrar = $pdo->prepare("DELETE FROM enrollment_attempts WHERE device_id = :id AND result = 'emitido'");
+        $borrar->execute([':id' => $deviceId]);
+
+        $olvidar = $pdo->prepare('DELETE FROM enrollments WHERE device_id = :id');
+        $olvidar->execute([':id' => $deviceId]);
+    }
+
     /** Intentos fallidos desde una IP en los ultimos $segundos. */
     public function failedAttemptsFrom(string $ip, string $desde): int
     {

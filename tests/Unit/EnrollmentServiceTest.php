@@ -90,7 +90,7 @@ final class EnrollmentServiceTest extends TestCase
         $servicio->enroll('rpi-intruso-09', self::SECRETO, '10.0.0.5');
     }
 
-    public function testAgotaElTopeDeTokensPorDispositivo(): void
+    public function testAgotaElTopeDeTokensDeLaVentana(): void
     {
         $servicio = $this->servicio(['enrollment_max_tokens' => 2]);
 
@@ -101,10 +101,44 @@ final class EnrollmentServiceTest extends TestCase
             $servicio->enroll('rpi-uno', self::SECRETO, '10.0.0.5');
             self::fail('Se esperaba el rechazo por tope.');
         } catch (HttpException $exception) {
-            self::assertSame(409, $exception->status());
+            self::assertSame(429, $exception->status());
         }
 
         self::assertSame(2, (int) $this->repositorio()->find('rpi-uno')['tokens_issued']);
+    }
+
+    public function testElTopeSeLibraAlPasarLaVentana(): void
+    {
+        $servicio = $this->servicio(['enrollment_max_tokens' => 1, 'enrollment_token_window_seconds' => 3600]);
+
+        $servicio->enroll('rpi-uno', self::SECRETO, '10.0.0.5');
+
+        try {
+            $servicio->enroll('rpi-uno', self::SECRETO, '10.0.0.5');
+            self::fail('Se esperaba el rechazo dentro de la ventana.');
+        } catch (HttpException $exception) {
+            self::assertSame(429, $exception->status());
+        }
+
+        // Una hora despues, el dispositivo vuelve a poder inscribirse: el tope
+        // frena el abuso, no deja al equipo fuera para siempre.
+        $this->clock->advance(3601);
+
+        self::assertSame('cabecera.cuerpo.firma', $servicio->enroll('rpi-uno', self::SECRETO, '10.0.0.5')['token']);
+        self::assertSame(2, (int) $this->repositorio()->find('rpi-uno')['tokens_issued'],
+            'El total historico se sigue contando para auditoria.');
+    }
+
+    public function testReiniciarDevuelveLaPosibilidadDeInscribirse(): void
+    {
+        $servicio = $this->servicio(['enrollment_max_tokens' => 1]);
+        $servicio->enroll('rpi-uno', self::SECRETO, '10.0.0.5');
+        $this->repositorio()->block('rpi-uno', 'bloqueado en una prueba', $this->clock->nowIso8601());
+
+        $this->repositorio()->reset('rpi-uno');
+
+        self::assertNull($this->repositorio()->find('rpi-uno'));
+        self::assertSame('cabecera.cuerpo.firma', $servicio->enroll('rpi-uno', self::SECRETO, '10.0.0.5')['token']);
     }
 
     public function testRechazaUnDispositivoBloqueado(): void
@@ -191,6 +225,7 @@ final class EnrollmentServiceTest extends TestCase
             'enrollment_secret' => self::SECRETO,
             'enrollment_devices' => [],
             'enrollment_max_tokens' => 2,
+            'enrollment_token_window_seconds' => 3600,
             'enrollment_max_failures_per_ip' => 10,
             'enrollment_failure_window_seconds' => 3600,
             'enrollment_token_duration' => '60m',

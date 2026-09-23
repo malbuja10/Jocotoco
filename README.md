@@ -126,7 +126,7 @@ php-fpm) sobre los valores de `config/config.php`:
 | `JOCOTOCO_ENROLLMENT_ENABLED` | `false` | Habilita `POST /v1/inscripcion` |
 | `JOCOTOCO_ENROLLMENT_SECRET` | vacio | Secreto de fabrica (16 caracteres o mas) |
 | `JOCOTOCO_ENROLLMENT_DEVICES` | vacio | Dispositivos autorizados a inscribirse |
-| `JOCOTOCO_ENROLLMENT_MAX_TOKENS` | `2` | Tokens de inscripcion por dispositivo |
+| `JOCOTOCO_ENROLLMENT_MAX_TOKENS` | `5` | Tokens de inscripcion por dispositivo y hora |
 
 `JOCOTOCO_MAX_UPLOAD_BYTES` debe ir acompanado de `LimitRequestBody` en
 Apache y de `upload_max_filesize`/`post_max_size` en php-fpm.
