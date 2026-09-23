@@ -14,6 +14,7 @@ DESTINO="/srv/jocotoco"
 DATOS="/var/lib/jocotoco"
 LOGS="/var/log/jocotoco"
 DOMINIO="api.jocotoco.local"
+PUERTO="443"
 USUARIO="jocotoco"
 
 while [[ $# -gt 0 ]]; do
@@ -21,6 +22,7 @@ while [[ $# -gt 0 ]]; do
         --origen) ORIGEN="$2"; shift 2 ;;
         --destino) DESTINO="$2"; shift 2 ;;
         --dominio) DOMINIO="$2"; shift 2 ;;
+        --puerto) PUERTO="$2"; shift 2 ;;
         *) echo "Parametro desconocido: $1" >&2; exit 1 ;;
     esac
 done
@@ -114,12 +116,43 @@ install -m 0644 "$ORIGEN/deploy/php/jocotoco-pool.conf" /etc/php/8.3/fpm/pool.d/
 install -m 0644 "$ORIGEN/deploy/php/opcache-jocotoco.ini" /etc/php/8.3/fpm/conf.d/99-jocotoco.ini
 sed -i "s|env\[JOCOTOCO_LOG_PATH\] = .*|env[JOCOTOCO_LOG_PATH] = $LOGS/api.log|" /etc/php/8.3/fpm/pool.d/jocotoco.conf
 
-echo "==> Configurando Apache"
+# Un sitio ya habilitado con el mismo ServerName y el mismo puerto gana
+# sobre el nuestro (Apache usa el primero que coincide), de modo que el API
+# quedaria como configuracion muerta. Mejor detenerse aqui.
+choque="$(grep -rlE "^[[:space:]]*ServerName[[:space:]]+${DOMINIO}([[:space:]]|\$)" \
+    /etc/apache2/sites-enabled/ 2>/dev/null | grep -v 'jocotoco-api' || true)"
+
+if [[ -n "$choque" ]] && [[ "$PUERTO" == "443" ]]; then
+    echo "ERROR: este Apache ya sirve ${DOMINIO} en otro sitio habilitado:" >&2
+    printf '         %s\n' $choque >&2
+    echo "       Dos VirtualHost con el mismo ServerName y puerto no conviven:" >&2
+    echo "       Apache atiende con el primero y el API quedaria inerte." >&2
+    echo "       Elija una de estas dos salidas:" >&2
+    echo "         a) un nombre propio para el API (recomendado):" >&2
+    echo "              --dominio api.\${DOMINIO#*.}" >&2
+    echo "         b) un puerto propio, sin tocar el sitio existente:" >&2
+    echo "              --puerto 8443" >&2
+    exit 1
+fi
+
+echo "==> Configurando Apache (${DOMINIO}:${PUERTO})"
 # MPM event + php-fpm por mod_proxy_fcgi: mod_php obligaria a usar prefork.
 a2dismod -q -f mpm_prefork 2>/dev/null || true
 a2enmod -q mpm_event ssl proxy_fcgi headers alias reqtimeout rewrite
 sed "s/api\.jocotoco\.local/$DOMINIO/g" "$ORIGEN/deploy/apache/jocotoco-api.conf" \
     > /etc/apache2/sites-available/jocotoco-api.conf
+
+if [[ "$PUERTO" != "443" ]]; then
+    # Puerto propio: se ajusta el VirtualHost, se agrega su Listen y se
+    # elimina la redireccion del puerto 80, que pertenece al otro sitio.
+    sed -i -e "s/^<VirtualHost \*:443>/<VirtualHost *:${PUERTO}>/" \
+           -e "/=== INICIO REDIRECCION HTTP ===/,/=== FIN REDIRECCION HTTP ===/d" \
+           /etc/apache2/sites-available/jocotoco-api.conf
+    echo "Listen ${PUERTO}" > /etc/apache2/conf-available/jocotoco-puerto.conf
+    a2enconf -q jocotoco-puerto
+else
+    rm -f /etc/apache2/conf-enabled/jocotoco-puerto.conf
+fi
 install -m 0644 "$ORIGEN/deploy/apache/jocotoco-endurecimiento.conf" /etc/apache2/conf-available/
 a2enconf -q jocotoco-endurecimiento
 grep -q 'ServerName' /etc/apache2/conf-available/jocotoco-endurecimiento.conf || \

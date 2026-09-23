@@ -97,6 +97,28 @@ quedan en `/var/lib/jocotoco` con 0750 del usuario `jocotoco`. Nunca guarde
 secretos en el arbol de codigo: van en `/etc/jocotoco` o en el entorno del
 pool.
 
+### Si el servidor ya sirve otros sitios con Apache
+
+Dos VirtualHost con el mismo `ServerName` en el mismo puerto no conviven:
+Apache atiende con el primero que encuentra y el otro queda inerte. El
+instalador lo detecta y se detiene antes de configurar nada. Hay dos salidas:
+
+```bash
+# a) un nombre propio para el API (recomendado si controla el DNS)
+sudo ./02-instalar-api.sh --dominio api.midominio.com
+
+# b) un puerto propio, sin tocar el sitio que ya usa el 443
+sudo ./02-instalar-api.sh --dominio midominio.com --puerto 8443
+```
+
+Con `--puerto` el instalador ajusta el VirtualHost, agrega su `Listen` en
+`conf-available/jocotoco-puerto.conf` y **elimina la redireccion del puerto
+80**, que pertenece al otro sitio. Las Raspberry usan entonces
+`JOCOTOCO_API_URL=https://midominio.com:8443`.
+
+Verificado con Apache 2.4.58: un sitio existente en el 443 sigue
+respondiendo igual mientras el API atiende en el 8443 con su propio mTLS.
+
 ### Ajustes que conviene revisar
 
 `/etc/php/8.3/fpm/pool.d/jocotoco.conf`:

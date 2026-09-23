@@ -117,13 +117,18 @@ if [[ ! -f /etc/apache2/sites-available/jocotoco-api.conf ]]; then
     exit 1
 fi
 
-# Si otro proceso ya escucha en 443, Apache no podra arrancar y el error de
-# systemd no lo dice con claridad.
+# El puerto lo fijo 02 en el VirtualHost; puede no ser el 443 si el servidor
+# ya tenia otro sitio ahi.
+PUERTO_API="$(grep -oP '^<VirtualHost \*:\K[0-9]+' /etc/apache2/sites-available/jocotoco-api.conf 2>/dev/null | tail -1 || true)"
+PUERTO_API="${PUERTO_API:-443}"
+
+# Si otro proceso ajeno a Apache ya escucha ese puerto, Apache no arrancara y
+# el error de systemd no lo dice con claridad.
 if command -v ss >/dev/null 2>&1; then
-    ocupa_443="$(ss -ltnpH 2>/dev/null | awk '$4 ~ /:443$/ {print $6}' | head -1 || true)"
-    if [[ -n "$ocupa_443" && "$ocupa_443" != *apache2* ]]; then
-        echo "    ADVERTENCIA: el puerto 443 ya lo escucha otro proceso:"
-        echo "                 ${ocupa_443}"
+    ocupa="$(ss -ltnpH 2>/dev/null | awk -v p=":${PUERTO_API}\$" '$4 ~ p {print $6}' | head -1 || true)"
+    if [[ -n "$ocupa" && "$ocupa" != *apache2* ]]; then
+        echo "    ADVERTENCIA: el puerto ${PUERTO_API} ya lo escucha otro proceso:"
+        echo "                 ${ocupa}"
         echo "                 Apache no podra arrancar hasta liberarlo."
     fi
 fi
@@ -165,6 +170,6 @@ cat <<RESUMEN
    Raiz  : /etc/step/certs/root_ca.crt  (Apache valida clientes con esta)
 
  Renovacion: jocotoco-cert-renew.timer (cada 8 h, recarga Apache).
- Verifique:  curl -sk https://${DOMINIO}/v1/salud | jq
+ Verifique:  curl -sk https://${DOMINIO}:${PUERTO_API}/v1/salud | jq
 ===========================================================================
 RESUMEN
