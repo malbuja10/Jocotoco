@@ -123,8 +123,18 @@ instalador lo detecta y se detiene antes de configurar nada. Hay dos salidas:
 sudo ./02-instalar-api.sh --dominio api.midominio.com
 
 # b) un puerto propio, sin tocar el sitio que ya usa el 443
-sudo ./02-instalar-api.sh --dominio midominio.com --puerto 8443
+sudo ./02-instalar-api.sh --dominio midominio.com --puerto 8444
 ```
+
+**No use el 8443 para el API**: es el puerto por defecto de step-ca (lo fija
+`01-instalar-step-ca.sh`). Antes de elegir, mire lo que ya escucha:
+
+```bash
+ss -ltnp | awk '{print $4, $6}'
+```
+
+El instalador se detiene si el puerto elegido lo ocupa un proceso que no es
+Apache, antes de configurar nada.
 
 Con `--puerto` el instalador ajusta el VirtualHost, agrega su `Listen` en
 `conf-available/jocotoco-puerto.conf` y **elimina la redireccion del puerto

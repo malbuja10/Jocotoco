@@ -127,9 +127,18 @@ PUERTO_API="${PUERTO_API:-443}"
 if command -v ss >/dev/null 2>&1; then
     ocupa="$(ss -ltnpH 2>/dev/null | awk -v p=":${PUERTO_API}\$" '$4 ~ p {print $6}' | head -1 || true)"
     if [[ -n "$ocupa" && "$ocupa" != *apache2* ]]; then
-        echo "    ADVERTENCIA: el puerto ${PUERTO_API} ya lo escucha otro proceso:"
-        echo "                 ${ocupa}"
-        echo "                 Apache no podra arrancar hasta liberarlo."
+        # Fatal a proposito, y antes de habilitar el sitio: si se habilita
+        # un VirtualHost cuyo puerto esta ocupado, Apache no arranca y se
+        # queda sin servir tampoco los demas sitios.
+        echo "ERROR: el puerto ${PUERTO_API} del API ya lo escucha otro proceso:" >&2
+        echo "         ${ocupa}" >&2
+        echo "       El certificado ya quedo emitido; solo falta elegir puerto." >&2
+        echo "       Reinstale el sitio en un puerto libre y repita este paso:" >&2
+        echo "         sudo ./02-instalar-api.sh --dominio ${DOMINIO} --puerto <LIBRE>" >&2
+        echo "       Puertos en uso ahora mismo:" >&2
+        ss -ltnH 2>/dev/null | awk '{print $4}' | grep -oE '[0-9]+$' | sort -un | tr '\n' ' ' >&2
+        echo >&2
+        exit 1
     fi
 fi
 

@@ -36,6 +36,23 @@ if [[ -r /etc/os-release ]]; then
     fi
 fi
 
+# El puerto tiene que estar libre (o ser de Apache). Comprobarlo aqui, antes
+# de instalar o configurar nada, evita dejar Apache con un sitio que no puede
+# arrancar. Ojo: step-ca escucha en 8443 por defecto.
+if command -v ss >/dev/null 2>&1; then
+    ocupa="$(ss -ltnpH 2>/dev/null | awk -v p=":${PUERTO}\$" '$4 ~ p {print $6}' | head -1 || true)"
+    if [[ -n "$ocupa" && "$ocupa" != *apache2* ]]; then
+        echo "ERROR: el puerto ${PUERTO} ya lo escucha otro proceso:" >&2
+        echo "         ${ocupa}" >&2
+        echo "       Apache no podria arrancar. Elija un puerto libre con" >&2
+        echo "       --puerto, o un nombre propio para el API en el 443." >&2
+        echo "       Puertos en uso ahora mismo:" >&2
+        ss -ltnH 2>/dev/null | awk '{print $4}' | grep -oE '[0-9]+$' | sort -un | tr '\n' ' ' >&2
+        echo >&2
+        exit 1
+    fi
+fi
+
 echo "==> Comprobando la disponibilidad de los paquetes"
 apt-get update -qq
 
