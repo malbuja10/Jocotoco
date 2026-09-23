@@ -14,7 +14,26 @@ sudo timedatectl set-ntp true
 timedatectl status          # NTP service: active, System clock synchronized: yes
 ```
 
-## 2. Obtener el token en el servidor
+## 2. La CA tiene que ser alcanzable por nombre
+
+step-ca solo atiende peticiones cuyo nombre figure en `dnsNames` de
+`ca.json`, y `step-cli` valida su certificado TLS contra ese nombre. Si la
+CA se inicializo con un nombre interno (`ca.jocotoco.local`), los
+dispositivos no podran renovar su certificado y a las 24 h dejaran de subir
+audio.
+
+Para publicar un nombre que los dispositivos si resuelvan:
+
+```bash
+sudo ./06-publicar-nombre-ca.sh ca.midominio.com
+```
+
+El script agrega el nombre (no reemplaza el existente), respalda `ca.json`,
+reinicia step-ca para que regenere su certificado TLS y, si no vuelve a
+responder, **restaura el respaldo**. Compruebe tambien que el puerto 8443
+sea alcanzable desde los dispositivos (cortafuegos, NAT).
+
+## 3. Obtener el token en el servidor
 
 ```bash
 sudo deploy/scripts/04-registrar-dispositivo.sh rpi-yanacocha-01
@@ -25,7 +44,7 @@ certificado y es la identidad con la que el API guarda las grabaciones:
 aparece en las rutas de los archivos y en los listados. Use nombres de
 hostname (minusculas, digitos, guiones y puntos).
 
-## 3. Bootstrap del dispositivo
+## 4. Bootstrap del dispositivo
 
 Copie `deploy/raspberry/` a la Raspberry y ejecute, antes de que el token
 venza (5 minutos):
@@ -51,7 +70,7 @@ Esto:
    `/usr/local/bin` y activa dos temporizadores;
 6. consulta `/v1/yo` para confirmar que el API ya lo reconoce.
 
-## 4. Grabar y enviar
+## 5. Grabar y enviar
 
 ```bash
 # Grabar 60 s y dejar en la cola (el temporizador la vacia cada 10 min)
@@ -88,7 +107,7 @@ Codigos de salida de `jocotoco-enviar-audio`: `0` enviado, `1` rechazo
 definitivo, `2` fallo temporal. La unidad systemd declara
 `SuccessExitStatus=0 2` para que un corte de red no la deje en estado fallido.
 
-## 5. Grabacion programada
+## 6. Grabacion programada
 
 Para grabar cada hora, agregue un temporizador propio:
 
@@ -124,7 +143,7 @@ Vigile el espacio en disco: 5 minutos de WAV 48 kHz 16 bit mono son unos
 comprimir antes de encolar (`flac --best grabacion.wav` reduce a la mitad sin
 perdida; el API acepta FLAC) o acortar el intervalo del envio.
 
-## 6. Renovacion del certificado
+## 7. Renovacion del certificado
 
 `jocotoco-renovar-cert.timer` corre cada 4 h y ejecuta
 `step ca renew --expires-in 8h`: renueva solo si al certificado le quedan
@@ -140,7 +159,7 @@ Si el certificado caduco estando el equipo apagado varios dias, la renovacion
 ya no es posible (step-ca exige un certificado vigente): pida un token nuevo y
 vuelva a ejecutar `bootstrap-dispositivo.sh`.
 
-## 7. Diagnostico
+## 8. Diagnostico
 
 ```bash
 # Como me ve el API
