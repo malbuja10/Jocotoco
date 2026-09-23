@@ -97,6 +97,34 @@ quedan en `/var/lib/jocotoco` con 0750 del usuario `jocotoco`. Nunca guarde
 secretos en el arbol de codigo: van en `/etc/jocotoco` o en el entorno del
 pool.
 
+### Activacion en un paso, con reversion automatica
+
+En un servidor que ya sirve otros sitios, `05-activar-api.sh` hace la parte
+delicada de una sola vez y **no deja Apache roto**:
+
+```bash
+sudo ./05-activar-api.sh --dominio dev.midominio.com --puerto 8444
+```
+
+1. Comprueba antes de tocar nada: aplicacion instalada, certificado emitido
+   y con el SAN correcto, raiz de la CA, socket del pool de php-fpm, puerto
+   libre y ausencia de otro VirtualHost con el mismo nombre y puerto. Si
+   algo falta, no modifica nada y lo enumera.
+2. Guarda el estado de Apache (sitios, confs y modulos habilitados) en
+   `/var/backups/jocotoco-apache-<fecha>.txt`.
+3. Genera el VirtualHost, lo habilita y valida la configuracion.
+4. Verifica el API de extremo a extremo: `/v1/salud` debe dar 200 y
+   `/v1/grabaciones` 403 sin certificado de cliente.
+5. Si cualquiera de esos pasos falla, **deshabilita el sitio y restaura
+   Apache**, confirmando que los demas sitios vuelven a servir.
+
+No modifica el MPM, no deshabilita sitios ajenos y solo escribe en
+`sites-available/jocotoco-api.conf` y su enlace en `sites-enabled`.
+
+Probado con Apache 2.4.58 + php8.3-fpm en los cuatro escenarios: activacion
+correcta, repeticion (idempotente), fallo de comprobacion previa y fallo de
+verificacion con reversion (Apache vuelve a quedar activo).
+
 ### Si el servidor ya sirve otros sitios con Apache
 
 El instalador **no modifica el MPM** ni deshabilita sitios ajenos. Cambiar

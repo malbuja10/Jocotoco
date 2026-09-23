@@ -43,7 +43,7 @@ contrasenas, la identidad es el certificado y la renueva `step-cli` sola.
 | `src/Storage/` | Archivos en disco, SQLite y migraciones |
 | `src/Controller/` | Endpoints |
 | `bin/jocotoco` | CLI: `migrate`, `config`, `inspeccionar-cert`, `listar`, `purgar` |
-| `deploy/scripts/` | Instalacion de step-ca y del API en Ubuntu 24.04 |
+| `deploy/scripts/` | Instalacion de step-ca y del API en Ubuntu 24.04 (`05-activar-api.sh` activa el sitio con reversion automatica) |
 | `deploy/raspberry/` | Cliente del dispositivo (step-cli + curl + systemd) |
 | `deploy/apache/`, `deploy/php/`, `deploy/systemd/` | Configuracion de servicio |
 | `docs/` | API, despliegue, dispositivos y decisiones de diseno |
