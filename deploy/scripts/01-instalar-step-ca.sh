@@ -173,9 +173,20 @@ if [[ -f "$STEPPATH/config/ca.json" ]]; then
     echo "==> step-ca ya estaba inicializada en $STEPPATH"
 else
     echo "==> Inicializando la CA"
-    clave_ca="$(mktemp)"
-    chmod 600 "$clave_ca"
-    openssl rand -base64 32 | tr -d '\n' > "$clave_ca"
+
+    # La contrasena se escribe directamente en $STEPPATH, que pertenece al
+    # usuario step. Un archivo temporal de root en /tmp con modo 600 no lo
+    # puede leer el proceso que ejecuta "step ca init", y el error que
+    # aparece es un "permission denied" sobre la ruta del temporal.
+    clave_ca="$STEPPATH/password.txt"
+    ( umask 077; openssl rand -base64 32 | tr -d '\n' > "$clave_ca" )
+    chown "$USUARIO_CA":"$USUARIO_CA" "$clave_ca"
+    chmod 0600 "$clave_ca"
+
+    if ! runuser -u "$USUARIO_CA" -- test -r "$clave_ca"; then
+        echo "ERROR: el usuario ${USUARIO_CA} no puede leer ${clave_ca}." >&2
+        exit 1
+    fi
 
     runuser -u "$USUARIO_CA" -- env STEPPATH="$STEPPATH" step ca init \
         --deployment-type=standalone \
@@ -184,9 +195,6 @@ else
         --address=":$CA_PUERTO" \
         --provisioner="dispositivos" \
         --password-file="$clave_ca"
-
-    install -o "$USUARIO_CA" -g "$USUARIO_CA" -m 0600 "$clave_ca" "$STEPPATH/password.txt"
-    rm -f "$clave_ca"
 
     echo "==> Ampliando la vigencia maxima de los certificados de dispositivo a 24 h"
     runuser -u "$USUARIO_CA" -- env STEPPATH="$STEPPATH" \
