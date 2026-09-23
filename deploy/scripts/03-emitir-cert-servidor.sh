@@ -117,12 +117,43 @@ if [[ ! -f /etc/apache2/sites-available/jocotoco-api.conf ]]; then
     exit 1
 fi
 
+# Si otro proceso ya escucha en 443, Apache no podra arrancar y el error de
+# systemd no lo dice con claridad.
+if command -v ss >/dev/null 2>&1; then
+    ocupa_443="$(ss -ltnpH 2>/dev/null | awk '$4 ~ /:443$/ {print $6}' | head -1 || true)"
+    if [[ -n "$ocupa_443" && "$ocupa_443" != *apache2* ]]; then
+        echo "    ADVERTENCIA: el puerto 443 ya lo escucha otro proceso:"
+        echo "                 ${ocupa_443}"
+        echo "                 Apache no podra arrancar hasta liberarlo."
+    fi
+fi
+
 a2ensite -q jocotoco-api
 # El sitio por defecto se aparta solo si sigue habilitado; los demas vhosts
 # del servidor no se tocan.
 a2dissite -q 000-default default-ssl 2>/dev/null || true
 
-apache2ctl configtest && systemctl reload apache2
+apache2ctl configtest
+
+# "systemctl reload" falla si el servicio no estaba corriendo: 02 configura
+# Apache pero no lo arranca, porque hasta ahora faltaban los certificados.
+if systemctl is-active --quiet apache2; then
+    accion=reload
+else
+    accion=start
+fi
+
+echo "==> Apache: ${accion}"
+if ! systemctl "$accion" apache2 || ! systemctl is-active --quiet apache2; then
+    echo "ERROR: Apache no pudo ${accion}. La sintaxis es valida, asi que el" >&2
+    echo "       problema es de arranque. Revise, en este orden:" >&2
+    echo "         journalctl -xeu apache2.service --no-pager | tail -30" >&2
+    echo "         systemctl status apache2.service --no-pager | tail -20" >&2
+    echo "         ss -ltnp | grep -E ':(80|443)'    # puerto ocupado" >&2
+    echo "         apache2ctl -S                     # vhosts y conflictos de ServerName" >&2
+    echo "       El sitio queda habilitado; corrija y ejecute: systemctl start apache2" >&2
+    exit 1
+fi
 
 cat <<RESUMEN
 
