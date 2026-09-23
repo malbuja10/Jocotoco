@@ -52,18 +52,49 @@ if [[ -z "$CA_URL" || -z "$HUELLA" ]]; then
     fi
 fi
 
+# El nombre de la CA tiene que resolver desde aqui: step valida el
+# certificado TLS de la CA contra ese nombre, asi que no sirve apuntar a
+# 127.0.0.1. Si la CA corre en esta misma maquina, basta una linea en
+# /etc/hosts.
+ca_host="${CA_URL#*://}"
+ca_host="${ca_host%%:*}"
+if ! getent hosts "$ca_host" >/dev/null 2>&1; then
+    echo "ERROR: el nombre ${ca_host} no resuelve en este servidor." >&2
+    echo "       step valida el certificado de la CA contra ese nombre." >&2
+    echo "       Si la CA corre aqui mismo, agreguelo a /etc/hosts:" >&2
+    echo "         echo '127.0.0.1 ${ca_host}' >> /etc/hosts" >&2
+    echo "       Si corre en otra maquina, publique el nombre en su DNS." >&2
+    exit 1
+fi
+
 echo "==> Confiando en la CA ${CA_URL}"
 step ca bootstrap --ca-url "$CA_URL" --fingerprint "$HUELLA" --force
 RAIZ_CA="$STEPPATH/certs/root_ca.crt"
 
+if ! step ca health --ca-url "$CA_URL" --root "$RAIZ_CA" >/dev/null 2>&1; then
+    echo "ERROR: la CA no responde en ${CA_URL}." >&2
+    echo "       Revise:  systemctl status step-ca" >&2
+    echo "                ss -ltnp | grep 8443" >&2
+    exit 1
+fi
+
 install -d -o root -g jocotoco -m 0750 "$DESTINO_TLS"
 
+# El provisioner JWK pide la contrasena de su llave para emitir el token.
+# Si la CA es local, es la misma que quedo en /etc/step/password.txt y se
+# pasa por archivo para no tener que teclearla; si no, step la pregunta.
+CLAVE_PROVISIONER=()
+if [[ -r /etc/step/password.txt ]]; then
+    CLAVE_PROVISIONER=(--provisioner-password-file /etc/step/password.txt)
+    echo "    (usando la contrasena del provisioner de /etc/step/password.txt)"
+fi
+
 echo "==> Solicitando el certificado del servidor para ${DOMINIO}"
-# El token se pide de forma interactiva contra el provisioner de la CA.
 step ca certificate "$DOMINIO" \
     "$DESTINO_TLS/servidor.crt" "$DESTINO_TLS/servidor.key" \
     --san "$DOMINIO" \
     --not-after "$VIGENCIA" \
+    "${CLAVE_PROVISIONER[@]}" \
     --force
 
 chown root:jocotoco "$DESTINO_TLS/servidor.crt" "$DESTINO_TLS/servidor.key"
