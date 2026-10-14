@@ -1,0 +1,474 @@
+openapi: 3.1.0
+info:
+  title: API Jocotoco — monitor de campo
+  version: "1.0.0"
+  summary: Recepcion de eventos de deteccion, audio, voltaje y telemetria desde Raspberry Pi autenticadas con mTLS.
+  description: |
+    Especificacion del servidor receptor descrito en el *Contrato de
+    integracion API | Monitor Jocotoco* v1.0.
+
+    Autenticacion: TLS mutuo con certificados emitidos por la step-ca del
+    proyecto. La identidad del dispositivo es el primer SAN DNS del
+    certificado y, si no existe, su CN; el `device_id` que viaja en el
+    payload debe coincidir con ella.
+
+    Solo se responde `200` o `201` cuando el dato —y el audio, en los
+    eventos— ya estan guardados de forma duradera. Nunca `202` ni `204`
+    como acuse de exito.
+
+    Los errores usan `application/problem+json` (RFC 7807).
+  license:
+    name: MIT
+
+servers:
+  - url: https://dev.minkafab.com:8444
+    description: Servidor de la reserva
+
+tags:
+  - name: monitor
+    description: Rutas del contrato del monitor de campo
+  - name: consulta
+    description: Consulta de lo recibido
+  - name: operacion
+    description: Salud, identidad e inventario
+
+security:
+  - mtls: []
+
+paths:
+  /v1/salud:
+    get:
+      tags: [operacion]
+      summary: Sonda de salud
+      description: Unica ruta de datos que no exige certificado de cliente.
+      security: []
+      responses:
+        "200": { description: La base y el almacenamiento responden }
+        "503": { description: Alguna comprobacion falla }
+
+  /v1/inscripcion:
+    post:
+      tags: [monitor]
+      summary: Alta del dispositivo y token de aprovisionamiento
+      description: |
+        A cambio del secreto de fabrica entrega un token de un solo uso de
+        step-ca, con el que el dispositivo pide su certificado. No exige
+        certificado de cliente. Viene deshabilitada (`404`) hasta que se
+        configura.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device_id, factory_secret]
+              properties:
+                device_id: { type: string, examples: ["rpi-yanacocha-01"] }
+                factory_secret: { type: string, writeOnly: true }
+      responses:
+        "200":
+          description: Token emitido
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, token]
+                properties:
+                  status: { type: string, const: authorized }
+                  token: { type: string, description: "Token de step-ca de un solo uso" }
+                  device_id: { type: string }
+                  expira_en: { type: string, examples: ["60m"] }
+                  ca_url: { type: [string, "null"] }
+                  huella_raiz: { type: [string, "null"] }
+                  tokens_restantes: { type: integer, description: "Los que quedan en la ventana de una hora" }
+        "400": { $ref: "#/components/responses/Problema" }
+        "403": { $ref: "#/components/responses/Problema" }
+        "404": { description: La inscripcion automatica no esta habilitada }
+        "429": { $ref: "#/components/responses/Problema" }
+
+  /api/sincronizar:
+    post:
+      tags: [monitor]
+      summary: Evento de deteccion con su audio
+      description: |
+        Seccion 3 del contrato. La clave logica es `device_id` + `event_id`:
+        repetir el envio devuelve `200` con el evento ya guardado y la
+        cabecera `Idempotent-Replay: true`.
+
+        Los valores de duracion, frecuencia, canales y profundidad se toman
+        de la cabecera del WAV, no del JSON; si difieren, el evento se
+        acepta y la diferencia queda en el log del servidor.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [data, audio]
+              properties:
+                data:
+                  type: string
+                  description: Objeto JSON serializado (maximo 64 KiB). Ver `EventoData`.
+                audio:
+                  type: string
+                  format: binary
+                  description: WAV PCM o IEEE float, `audio/wav`, maximo 64 MiB.
+            encoding:
+              data: { contentType: text/plain }
+              audio: { contentType: audio/wav }
+      responses:
+        "201":
+          description: Evento nuevo guardado junto con su audio
+          headers:
+            Location: { schema: { type: string }, description: Ruta del evento }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RespuestaEvento" }
+        "200":
+          description: Reenvio de un evento ya guardado
+          headers:
+            Idempotent-Replay: { schema: { type: string, const: "true" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RespuestaEvento" }
+        "400": { $ref: "#/components/responses/Problema" }
+        "401": { $ref: "#/components/responses/Problema" }
+        "403": { $ref: "#/components/responses/Problema" }
+        "413": { $ref: "#/components/responses/Problema" }
+        "415": { $ref: "#/components/responses/Problema" }
+        "422": { $ref: "#/components/responses/Problema" }
+
+  /api/telemetry/voltage:
+    post:
+      tags: [monitor]
+      summary: Lote de lecturas de voltaje
+      description: |
+        Seccion 4 del contrato. Deduplicacion por `device_id` + `timestamp`.
+        Un registro invalido rechaza el lote entero.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [voltage]
+              properties:
+                voltage:
+                  type: array
+                  minItems: 1
+                  maxItems: 1000
+                  items: { $ref: "#/components/schemas/LecturaVoltaje" }
+      responses:
+        "200":
+          description: Lote aceptado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RespuestaTelemetria" }
+        "400": { $ref: "#/components/responses/Problema" }
+        "401": { $ref: "#/components/responses/Problema" }
+        "403": { $ref: "#/components/responses/Problema" }
+        "413": { $ref: "#/components/responses/Problema" }
+        "422": { $ref: "#/components/responses/Problema" }
+
+  /api/telemetry/status:
+    post:
+      tags: [monitor]
+      summary: Lote de estado del dispositivo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device_telemetry]
+              properties:
+                device_telemetry:
+                  type: array
+                  minItems: 1
+                  maxItems: 1000
+                  items: { $ref: "#/components/schemas/EstadoDispositivo" }
+      responses:
+        "200":
+          description: Lote aceptado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RespuestaTelemetria" }
+        "400": { $ref: "#/components/responses/Problema" }
+        "401": { $ref: "#/components/responses/Problema" }
+        "403": { $ref: "#/components/responses/Problema" }
+        "413": { $ref: "#/components/responses/Problema" }
+        "422": { $ref: "#/components/responses/Problema" }
+
+  /v1/eventos:
+    get:
+      tags: [consulta]
+      summary: Eventos del dispositivo que consulta
+      parameters:
+        - { name: limite, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: desplazamiento, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { name: clase, in: query, schema: { type: string }, description: Filtra por `threat_type` }
+      responses:
+        "200":
+          description: Listado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer }
+                  limite: { type: integer }
+                  desplazamiento: { type: integer }
+                  eventos:
+                    type: array
+                    items: { $ref: "#/components/schemas/Evento" }
+        "401": { $ref: "#/components/responses/Problema" }
+        "403": { description: "Sin certificado de cliente: lo corta Apache" }
+
+  /v1/eventos/{id}:
+    get:
+      tags: [consulta]
+      summary: Un evento, con el payload original del monitor
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, description: ULID interno }
+      responses:
+        "200":
+          description: Evento
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  evento: { $ref: "#/components/schemas/Evento" }
+                  payload_original: { type: object, additionalProperties: true }
+                  ruta_declarada_en_el_dispositivo: { type: [string, "null"] }
+        "400": { $ref: "#/components/responses/Problema" }
+        "403": { $ref: "#/components/responses/Problema" }
+        "404": { $ref: "#/components/responses/Problema" }
+
+  /v1/telemetria:
+    get:
+      tags: [consulta]
+      summary: Ultimos registros de voltaje y estado del dispositivo
+      parameters:
+        - { name: limite, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 20 } }
+      responses:
+        "200":
+          description: Ultimo estado conocido
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dispositivo: { type: string }
+                  voltaje: { type: array, items: { type: object, additionalProperties: true } }
+                  estado: { type: array, items: { type: object, additionalProperties: true } }
+
+  /v1/yo:
+    get:
+      tags: [operacion]
+      summary: Como ve el API al dispositivo y cuanto le queda de certificado
+      responses:
+        "200": { description: Identidad y vigencia }
+        "401": { $ref: "#/components/responses/Problema" }
+        "403": { description: "Sin certificado de cliente: lo corta Apache" }
+
+  /v1/limites:
+    get:
+      tags: [operacion]
+      summary: Limites vigentes del servidor
+      responses:
+        "200": { description: Tamanos y formatos aceptados }
+
+  /v1/grabaciones:
+    post:
+      tags: [consulta]
+      summary: Envio de un audio suelto, sin evento
+      description: |
+        Ruta propia del API (no del contrato del monitor): acepta el audio
+        como cuerpo binario o como `multipart/form-data`, con los metadatos
+        en cabeceras `X-*`. Util para pruebas desde la laptop y para
+        grabaciones programadas.
+      requestBody:
+        required: true
+        content:
+          audio/wav: { schema: { type: string, format: binary } }
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                audio: { type: string, format: binary }
+      responses:
+        "201": { description: Grabacion nueva }
+        "200": { description: Ya estaba (mismo sha256 del mismo dispositivo) }
+        "400": { $ref: "#/components/responses/Problema" }
+        "413": { $ref: "#/components/responses/Problema" }
+        "415": { $ref: "#/components/responses/Problema" }
+    get:
+      tags: [consulta]
+      summary: Grabaciones del dispositivo que consulta
+      parameters:
+        - { name: limite, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: desplazamiento, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { name: desde, in: query, schema: { type: string, format: date-time } }
+        - { name: dispositivo, in: query, schema: { type: string }, description: Solo para clientes de consulta }
+      responses:
+        "200": { description: Listado }
+
+  /v1/grabaciones/{id}:
+    get:
+      tags: [consulta]
+      summary: Metadatos de una grabacion
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Grabacion }
+        "403": { $ref: "#/components/responses/Problema" }
+        "404": { $ref: "#/components/responses/Problema" }
+    delete:
+      tags: [consulta]
+      summary: Borrado de una grabacion (deshabilitado por defecto)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Borrada }
+        "403": { description: El borrado no esta habilitado }
+
+  /v1/grabaciones/{id}/audio:
+    get:
+      tags: [consulta]
+      summary: Descarga del archivo
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: If-None-Match, in: header, schema: { type: string }, description: sha256 del archivo }
+      responses:
+        "200":
+          description: Archivo
+          content:
+            audio/wav: { schema: { type: string, format: binary } }
+        "304": { description: Sin cambios }
+        "403": { $ref: "#/components/responses/Problema" }
+        "404": { $ref: "#/components/responses/Problema" }
+
+  /v1/dispositivos:
+    get:
+      tags: [operacion]
+      summary: Inventario de dispositivos vistos
+      description: Solo para los certificados de consulta; el resto recibe `403`.
+      responses:
+        "200": { description: Inventario }
+        "403": { $ref: "#/components/responses/Problema" }
+
+components:
+  securitySchemes:
+    mtls:
+      type: mutualTLS
+      description: |
+        Certificado de cliente emitido por `Jocotoco Intermediate CA`
+        (step-ca, provisioner `dispositivos`). Apache valida la cadena y la
+        vigencia en el handshake; el API vuelve a comprobarlas y deriva de
+        ahi la identidad del dispositivo.
+
+  responses:
+    Problema:
+      description: Error en formato RFC 7807
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problema" }
+
+  schemas:
+    Problema:
+      type: object
+      required: [type, title, status, detail]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+      additionalProperties: true
+
+    EventoData:
+      type: object
+      description: Contenido de la parte `data` de `POST /api/sincronizar`.
+      required: [event_id]
+      properties:
+        event_id:
+          type: string
+          pattern: "^[A-Za-z0-9._:-]{8,64}$"
+          description: Identificador generado por el monitor; un UUID encaja.
+        device_id:
+          type: string
+          description: Si viene, debe ser el del certificado.
+        threat_type:
+          type: string
+          maxLength: 64
+          description: Etiqueta del modelo; puede ser ruido u otra clase que no sea amenaza.
+        confidence_score: { type: number }
+        audio_path:
+          type: string
+          description: Ruta local en la Raspberry. Se guarda como referencia; el servidor nunca la lee.
+        timestamp:
+          type: integer
+          description: Epoch UTC en segundos (se aceptan milisegundos). Si falta, la hora del servidor.
+        duration_sec: { type: number }
+        sample_rate: { type: integer }
+        channels: { type: integer }
+        bit_depth: { type: integer }
+      additionalProperties: true
+
+    Evento:
+      type: object
+      properties:
+        id: { type: string, description: ULID interno }
+        event_id: { type: string }
+        device_id: { type: string }
+        threat_type: { type: [string, "null"] }
+        confidence_score: { type: [number, "null"] }
+        timestamp: { type: [integer, "null"] }
+        ocurrido_en: { type: [string, "null"], format: date-time }
+        audio:
+          type: object
+          properties:
+            grabacion_id: { type: [string, "null"] }
+            duration_sec: { type: [number, "null"] }
+            sample_rate: { type: [integer, "null"] }
+            channels: { type: [integer, "null"] }
+            bit_depth: { type: [integer, "null"] }
+            descarga: { type: [string, "null"] }
+        recibido_en: { type: string, format: date-time }
+
+    RespuestaEvento:
+      type: object
+      properties:
+        status: { type: string, const: ok }
+        duplicado: { type: boolean }
+        evento: { $ref: "#/components/schemas/Evento" }
+
+    LecturaVoltaje:
+      type: object
+      required: [timestamp, value]
+      properties:
+        timestamp: { type: integer, description: Epoch UTC en segundos }
+        value: { type: number, minimum: -1000, maximum: 1000, description: Voltios }
+        device_id: { type: string }
+
+    EstadoDispositivo:
+      type: object
+      required: [timestamp]
+      properties:
+        timestamp: { type: integer, description: Epoch UTC en segundos }
+        cpu_temp: { type: number, minimum: -50, maximum: 150, description: Grados Celsius }
+        cpu_usage_pct: { type: number, minimum: 0, maximum: 100 }
+        ram_usage_pct: { type: number, minimum: 0, maximum: 100 }
+        disk_free_gb: { type: number, minimum: 0 }
+        disk_usage_pct: { type: number, minimum: 0, maximum: 100 }
+        uptime_hours: { type: number, minimum: 0 }
+        device_id: { type: string }
+
+    RespuestaTelemetria:
+      type: object
+      properties:
+        status: { type: string, const: ok }
+        recibidas: { type: integer }
+        guardadas: { type: integer }
+        duplicadas: { type: integer, description: Ya existian con ese `device_id` + `timestamp` }

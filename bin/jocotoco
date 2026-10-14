@@ -13,7 +13,8 @@ declare(strict_types=1);
  *                                   certificado emitido por step-ca
  *   bin/jocotoco listar [dispositivo]
  *                                   Ultimas grabaciones registradas
- *   bin/jocotoco purgar <dias>      Elimina grabaciones mas antiguas que N dias
+ *   bin/jocotoco purgar <dias>      Elimina grabaciones, eventos y telemetria
+ *                                   mas antiguos que N dias
  *   bin/jocotoco inscripciones      Estado del alta automatica por dispositivo
  *   bin/jocotoco bloquear-inscripcion <dispositivo> [motivo]
  *                                   Impide que ese dispositivo vuelva a
@@ -105,6 +106,15 @@ switch ($command) {
             $borradas++;
         }
         $salida(sprintf('Grabaciones eliminadas: %d (anteriores a %s)', $borradas, $limite));
+
+        // Eventos y telemetria siguen la misma politica de retencion: el
+        // evento sin su audio deja de tener valor probatorio.
+        $pdo = $app->database()->connection();
+        foreach (['detection_events', 'voltage_readings', 'device_telemetry'] as $tabla) {
+            $statement = $pdo->prepare(sprintf('DELETE FROM %s WHERE received_at < :limite', $tabla));
+            $statement->execute([':limite' => $limite]);
+            $salida(sprintf('%-18s filas eliminadas: %d', $tabla, $statement->rowCount()));
+        }
         break;
 
     case 'inscripciones':
@@ -162,7 +172,7 @@ switch ($command) {
           config                           Muestra la configuracion efectiva
           inspeccionar-cert <archivo.crt>  Interpreta un certificado de step-ca
           listar [dispositivo]             Ultimas grabaciones
-          purgar <dias>                    Borra grabaciones antiguas
+          purgar <dias>                    Borra grabaciones, eventos y telemetria antiguos
           inscripciones                    Estado del alta automatica
           bloquear-inscripcion <disp>      Impide que se vuelva a inscribir
           reiniciar-inscripcion <disp>     Le devuelve la posibilidad de inscribirse

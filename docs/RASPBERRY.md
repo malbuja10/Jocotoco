@@ -75,6 +75,12 @@ Esto:
 
 ## 5. Grabar y enviar
 
+> Si en la Raspberry corre el **monitor de campo** (el que detecta y envia
+> eventos, voltaje y estado), lo que necesita es el certificado de este
+> capitulo y las URL de
+> [`CONTRATO-MONITOR.md`](CONTRATO-MONITOR.md); las ordenes de aqui abajo
+> son del cliente de grabaciones sueltas, que es independiente.
+
 ```bash
 # Grabar 60 s y dejar en la cola (el temporizador la vacia cada 10 min)
 jocotoco-grabar-audio --segundos 60

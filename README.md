@@ -27,8 +27,9 @@ contrasenas, la identidad es el certificado y la renueva `step-cli` sola.
   en bloques de 256 KiB (una grabacion de 64 MiB no se carga en memoria).
 - **Validacion real del contenido**: el formato se detecta por bytes magicos,
   no por la extension ni por el `Content-Type` declarado.
-- **Idempotencia**: el par (dispositivo, sha256) es unico, de modo que la
-  Raspberry puede reintentar un envio sin duplicar grabaciones.
+- **Idempotencia**: el par (dispositivo, sha256) es unico para el audio, y
+  (dispositivo, `event_id`) para los eventos, de modo que la Raspberry puede
+  reintentar un envio sin duplicar nada.
 - **Escritura atomica**: se escribe un `.parcial` y se renombra, asi un envio
   cortado nunca deja un archivo a medias en el arbol de datos.
 
@@ -39,10 +40,12 @@ contrasenas, la identidad es el certificado y la renueva `step-cli` sola.
 | `public/index.php` | Punto de entrada (php-fpm) |
 | `src/Http/` | Request, Response, Router (errores RFC 7807) |
 | `src/Security/` | Lectura del certificado de cliente y autenticacion mTLS |
-| `src/Audio/` | Lectura del cuerpo, validacion, caso de uso de recepcion |
+| `src/Audio/` | Lectura del cuerpo, validacion, caso de uso de recepcion, lectura de cabeceras WAV |
+| `src/Events/` | Eventos de deteccion del monitor (`/api/sincronizar`) |
+| `src/Telemetry/` | Voltaje y estado del dispositivo (`/api/telemetry/*`) |
 | `src/Storage/` | Archivos en disco, SQLite y migraciones |
 | `src/Controller/` | Endpoints |
-| `bin/jocotoco` | CLI: `migrate`, `config`, `inspeccionar-cert`, `listar`, `purgar` |
+| `bin/jocotoco` | CLI: `migrate`, `config`, `inspeccionar-cert`, `listar`, `purgar`, `inscripciones` |
 | `deploy/scripts/` | Instalacion de step-ca y del API en Ubuntu 24.04 (`05-activar-api.sh` activa el sitio con reversion automatica) |
 | `deploy/raspberry/` | Cliente del dispositivo en bash (step-cli + curl + systemd) |
 | `deploy/raspberry/python/` | Cliente equivalente en Python, para integrarlo en un programa propio |
@@ -81,6 +84,12 @@ solos desde su propio codigo, vea [`docs/INSCRIPCION.md`](docs/INSCRIPCION.md).
 |--------|------|------|-------------|
 | GET | `/v1/salud` | no | Estado del servicio (monitoreo) |
 | POST | `/v1/inscripcion` | no | Alta automatica: token de step-ca a cambio del secreto de fabrica (deshabilitada por defecto) |
+| POST | `/api/sincronizar` | si | Evento de deteccion + WAV (`multipart`), idempotente por `device_id` + `event_id` |
+| POST | `/api/telemetry/voltage` | si | Lote de lecturas de voltaje |
+| POST | `/api/telemetry/status` | si | Lote de estado del dispositivo (CPU, RAM, disco, uptime) |
+| GET | `/v1/eventos` | si | Eventos del dispositivo |
+| GET | `/v1/eventos/{id}` | si | Un evento, con el payload original |
+| GET | `/v1/telemetria` | si | Ultimo voltaje y estado recibidos |
 | GET | `/v1/yo` | si | Identidad y vigencia del certificado del dispositivo |
 | GET | `/v1/limites` | si | Tamano maximo, formatos y cabeceras aceptadas |
 | POST | `/v1/grabaciones` | si | Sube una grabacion |
@@ -103,6 +112,12 @@ curl -sS --cert /etc/jocotoco/tls/dispositivo.crt \
         -H 'X-Metadatos: {"sitio":"Reserva Yanacocha","estacion":"E-07"}' \
         --data-binary @grabacion.wav
 ```
+
+Las cuatro primeras rutas son las del *Contrato de integracion API | Monitor
+Jocotoco*: la respuesta punto por punto a ese documento (URLs definitivas,
+politica mTLS, limites, unidades, deduplicacion y retencion) esta en
+[`docs/CONTRATO-MONITOR.md`](docs/CONTRATO-MONITOR.md), y la especificacion
+formal en [`docs/openapi.yaml`](docs/openapi.yaml).
 
 La referencia completa, con todos los codigos de error, esta en
 [`docs/API.md`](docs/API.md).
@@ -127,6 +142,12 @@ php-fpm) sobre los valores de `config/config.php`:
 | `JOCOTOCO_ENROLLMENT_SECRET` | vacio | Secreto de fabrica (16 caracteres o mas) |
 | `JOCOTOCO_ENROLLMENT_DEVICES` | vacio | Dispositivos autorizados a inscribirse |
 | `JOCOTOCO_ENROLLMENT_MAX_TOKENS` | `5` | Tokens de inscripcion por dispositivo y hora |
+| `JOCOTOCO_EVENT_MAX_DATA_BYTES` | `65536` | Tamano maximo de la parte `data` del evento |
+| `JOCOTOCO_EVENT_MAX_DURATION_SECONDS` | `300` | Duracion maxima del WAV de un evento |
+| `JOCOTOCO_EVENT_ALLOWED_SAMPLE_RATES` | `8000,…,192000` | Frecuencias aceptadas (vacio = cualquiera) |
+| `JOCOTOCO_EVENT_MAX_CHANNELS` | `2` | Canales maximos del WAV |
+| `JOCOTOCO_TELEMETRY_MAX_RECORDS` | `1000` | Registros por lote de telemetria |
+| `JOCOTOCO_TELEMETRY_MAX_BODY_BYTES` | `1048576` | Cuerpo JSON maximo de telemetria |
 
 `JOCOTOCO_MAX_UPLOAD_BYTES` debe ir acompanado de `LimitRequestBody` en
 Apache y de `upload_max_filesize`/`post_max_size` en php-fpm.

@@ -1,6 +1,8 @@
 # Referencia del API
 
-Base: `https://api.jocotoco.local/v1`
+Base en el despliegue actual: `https://dev.minkafab.com:8444`
+(las rutas del contrato del monitor cuelgan de `/api`, las de consulta y
+operacion de `/v1`).
 Autenticacion: TLS mutuo con certificado emitido por step-ca. La identidad del
 dispositivo es el primer SAN DNS del certificado y, si no existe, su CN.
 
@@ -192,3 +194,152 @@ registro y el archivo y responde `204`.
 Inventario de dispositivos vistos (primera y ultima conexion, huella del
 ultimo certificado, totales). Solo para `JOCOTOCO_READER_DEVICES`; el resto
 recibe `403`.
+
+---
+
+# Rutas del contrato del monitor
+
+Las tres rutas que usa el monitor de campo (ver
+[`CONTRATO-MONITOR.md`](CONTRATO-MONITOR.md)). Todas exigen certificado de
+cliente y responden `200`/`201` **solo** cuando el dato ya esta guardado de
+forma duradera; nunca `202` ni `204`, que el monitor no reconoce como exito.
+
+## POST /api/sincronizar
+
+Evento de deteccion con su audio, en `multipart/form-data`:
+
+| Parte | Tipo | Contenido |
+|-------|------|-----------|
+| `data` | campo de texto | objeto JSON serializado (maximo 64 KiB) |
+| `audio` | archivo | WAV PCM, `audio/wav` |
+
+Campos de `data`:
+
+| Campo | Tipo | Obligatorio | Notas |
+|-------|------|-------------|-------|
+| `event_id` | string | si | 8 a 64 caracteres `A-Za-z0-9 . _ : -`; un UUID encaja |
+| `device_id` | string | no | si viene, debe coincidir con el certificado (`403` si no) |
+| `threat_type` | string | no | etiqueta del modelo, se guarda literal (maximo 64) |
+| `confidence_score` | number | no | `400` si no es numerico |
+| `audio_path` | string | no | ruta en la Raspberry; se guarda como referencia y nunca se lee |
+| `timestamp` | number | no | epoch UTC en segundos (se aceptan milisegundos); si falta, la hora del servidor |
+| `duration_sec`, `sample_rate`, `channels`, `bit_depth` | number | no | se comparan con el WAV; manda el archivo |
+
+Limites del audio: WAV PCM o IEEE float, duracion util entre 0 y
+`event_max_duration_seconds` (300 s), frecuencia dentro de
+`event_allowed_sample_rates` (8000, 16000, 22050, 32000, 44100, 48000, 96000
+y 192000 Hz) y hasta `event_max_channels` (2) canales.
+
+```bash
+curl --cert /etc/jocotoco/device.crt --key /etc/jocotoco/device.key \
+     --cacert /etc/jocotoco/root_ca.crt \
+     -F 'data={"event_id":"7f4c1d62-9a84-4c3d-9d2e-1b0f5a6c7e81","threat_type":"chainsaw","confidence_score":0.87,"timestamp":1792000000}' \
+     -F 'audio=@/home/pi/monitor/audio/evento.wav;type=audio/wav' \
+     https://dev.minkafab.com:8444/api/sincronizar
+```
+
+Respuesta `201` (evento nuevo) o `200` (reenvio del mismo
+`device_id` + `event_id`, con la cabecera `Idempotent-Replay: true`):
+
+```json
+{
+  "status": "ok",
+  "duplicado": false,
+  "evento": {
+    "id": "01K7A0W8Q3M6V2S4R9N1T5YH7C",
+    "event_id": "7f4c1d62-9a84-4c3d-9d2e-1b0f5a6c7e81",
+    "device_id": "rpi-yanacocha-01",
+    "threat_type": "chainsaw",
+    "confidence_score": 0.87,
+    "timestamp": 1792000000,
+    "ocurrido_en": "2026-10-14T12:26:40Z",
+    "audio": {
+      "grabacion_id": "01K7A0W8Q3C8D0F2H4J6L8N0P2",
+      "duration_sec": 2.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "bit_depth": 16,
+      "descarga": "/v1/grabaciones/01K7A0W8Q3C8D0F2H4J6L8N0P2/audio"
+    },
+    "recibido_en": "2026-10-14T12:27:03Z"
+  }
+}
+```
+
+Los valores de `audio` salen de la cabecera del WAV, no del JSON: si el
+monitor declara otra cosa, el evento se acepta igual y la diferencia queda
+anotada en el log del servidor.
+
+Errores: `400` (falta `data` o `audio`, JSON invalido, `event_id` mal
+formado, `timestamp` implausible), `403` (sin certificado de cliente —lo
+corta Apache— o `device_id` ajeno al certificado),
+`413` (parte `data` demasiado grande), `415` (no es un WAV legible o no es
+PCM), `422` (duracion, frecuencia o canales fuera de limites).
+
+## POST /api/telemetry/voltage
+
+```json
+{ "voltage": [ { "timestamp": 1792000000, "value": 12.4, "device_id": "rpi-yanacocha-01" } ] }
+```
+
+`timestamp` en epoch UTC (segundos; se aceptan milisegundos), `value` en
+voltios entre -1000 y 1000, `device_id` opcional y, si viene, igual al del
+certificado. Hasta `telemetry_max_records` (1000) registros y
+`telemetry_max_body_bytes` (1 MiB) por solicitud.
+
+## POST /api/telemetry/status
+
+```json
+{
+  "device_telemetry": [
+    {
+      "timestamp": 1792000000,
+      "cpu_temp": 48.2,
+      "cpu_usage_pct": 14.5,
+      "ram_usage_pct": 37.1,
+      "disk_free_gb": 21.8,
+      "disk_usage_pct": 32.0,
+      "uptime_hours": 76.4,
+      "device_id": "rpi-yanacocha-01"
+    }
+  ]
+}
+```
+
+Solo `timestamp` es obligatorio; el resto puede faltar y se guarda como nulo.
+Rangos aceptados: `cpu_temp` -50 a 150 °C, los `*_pct` de 0 a 100,
+`disk_free_gb` y `uptime_hours` de 0 a 1 000 000.
+
+### Respuesta de las dos rutas de telemetria
+
+```json
+{ "status": "ok", "recibidas": 12, "guardadas": 10, "duplicadas": 2 }
+```
+
+Siempre `200`. `duplicadas` son los registros que ya existian con el mismo
+`device_id` + `timestamp`: reenviar un lote es seguro.
+
+Un lote con **un solo** registro invalido se rechaza entero (`400`, `403`,
+`413` o `422` segun el caso) y no se guarda nada. Es deliberado: el monitor
+borra sus datos locales al recibir `200`, asi que un exito parcial le haria
+perder los registros descartados.
+
+## GET /v1/eventos
+
+Eventos del dispositivo que consulta. Parametros: `limite` (1–200, defecto
+50), `desplazamiento` y `clase` (filtra por `threat_type`).
+
+```json
+{ "total": 37, "limite": 50, "desplazamiento": 0, "eventos": [ ... ] }
+```
+
+## GET /v1/eventos/{id}
+
+Un evento con su `payload_original` (el JSON tal cual lo envio el monitor) y
+`ruta_declarada_en_el_dispositivo`. `403` si es de otro dispositivo, `404` si
+no existe.
+
+## GET /v1/telemetria
+
+Lo ultimo recibido del dispositivo que consulta: `voltaje` y `estado`, con
+`limite` registros de cada uno (1–200, defecto 20).
