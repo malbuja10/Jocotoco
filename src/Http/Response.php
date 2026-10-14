@@ -30,7 +30,7 @@ final class Response
     {
         $encoded = json_encode(
             $payload,
-            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR,
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR,
         );
 
         return new self($status, array_merge(['Content-Type' => 'application/json; charset=utf-8'], $headers), $encoded . "\n");
@@ -52,7 +52,7 @@ final class Response
 
         $encoded = json_encode(
             $payload,
-            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR,
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR,
         );
 
         return new self($status, ['Content-Type' => 'application/problem+json; charset=utf-8'], $encoded . "\n");

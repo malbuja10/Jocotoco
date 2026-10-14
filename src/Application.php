@@ -7,16 +7,21 @@ namespace Jocotoco;
 use Jocotoco\Audio\AudioSniffer;
 use Jocotoco\Audio\AudioValidator;
 use Jocotoco\Audio\PayloadReader;
+use Jocotoco\Audio\WavInspector;
 use Jocotoco\Audio\RecordingService;
 use Jocotoco\Config\Config;
 use Jocotoco\Controller\EnrollmentController;
+use Jocotoco\Controller\EventsController;
 use Jocotoco\Controller\HealthController;
 use Jocotoco\Controller\IdentityController;
 use Jocotoco\Controller\RecordingsController;
+use Jocotoco\Controller\TelemetryController;
 use Jocotoco\Enrollment\EnrollmentRepository;
 use Jocotoco\Enrollment\EnrollmentService;
 use Jocotoco\Enrollment\StepCaTokenIssuer;
 use Jocotoco\Exception\HttpException;
+use Jocotoco\Events\EventRepository;
+use Jocotoco\Events\EventService;
 use Jocotoco\Exception\StorageException;
 use Jocotoco\Http\Request;
 use Jocotoco\Http\Response;
@@ -28,6 +33,8 @@ use Jocotoco\Storage\RecordingRepository;
 use Jocotoco\Support\Clock;
 use Jocotoco\Support\Logger;
 use Jocotoco\Support\SystemClock;
+use Jocotoco\Telemetry\TelemetryRepository;
+use Jocotoco\Telemetry\TelemetryService;
 use Throwable;
 
 /**
@@ -216,6 +223,26 @@ final class Application
         ));
         $recordings = new RecordingsController($this->service, $this->repository, $this->validator, $this->config);
 
+        $eventRepository = new EventRepository($this->database);
+        $events = new EventsController(
+            new EventService(
+                $this->config,
+                $eventRepository,
+                $this->service,
+                new WavInspector(),
+                $this->clock,
+                $this->logger,
+            ),
+            $eventRepository,
+        );
+
+        $telemetryRepository = new TelemetryRepository($this->database);
+        $telemetry = new TelemetryController(
+            new TelemetryService($this->config, $telemetryRepository, $this->clock, $this->logger),
+            $telemetryRepository,
+            $this->config,
+        );
+
         // Publica sobre TLS: permite chequeos de salud sin certificado.
         $router->get('/v1/salud', $health);
 
@@ -231,6 +258,17 @@ final class Application
         $router->get('/v1/grabaciones/{id}/audio', $this->authenticated($recordings->download(...)));
         $router->delete('/v1/grabaciones/{id}', $this->authenticated($recordings->destroy(...)));
         $router->get('/v1/dispositivos', $this->authenticated($recordings->devices(...)));
+
+        // Rutas del monitor de campo, con las URL que trae configuradas su
+        // cliente (contrato de integracion v1.0, secciones 3 y 4).
+        $router->post('/api/sincronizar', $this->authenticated($events->store(...)));
+        $router->post('/api/telemetry/voltage', $this->authenticated($telemetry->voltage(...)));
+        $router->post('/api/telemetry/status', $this->authenticated($telemetry->status(...)));
+
+        // Consulta de lo recibido, para operacion y verificacion.
+        $router->get('/v1/eventos', $this->authenticated($events->index(...)));
+        $router->get('/v1/eventos/{id}', $this->authenticated($events->show(...)));
+        $router->get('/v1/telemetria', $this->authenticated($telemetry->latest(...)));
 
         return $router;
     }

@@ -35,88 +35,116 @@ final class RecordingService
         $payload = $this->reader->read($request);
 
         try {
-            $format = $this->validator->validateFile($payload->temporaryPath, $payload->declaredMediaType);
-            $sha256 = $this->validator->verifyChecksum($payload->temporaryPath, $request->header('x-audio-sha256'));
+            $campos = array_merge($payload->fields, $request->parsedBody());
 
-            $existing = $this->repository->findByChecksum($device->id, $sha256);
-            if ($existing !== null) {
-                $this->logger->info('Grabacion duplicada ignorada', [
-                    'dispositivo' => $device->id,
-                    'grabacion' => $existing->id,
-                    'sha256' => $sha256,
-                ]);
-
-                return new StoreRecordingResult($existing, true);
-            }
-
-            $now = $this->clock->now();
-            $fields = array_merge($payload->fields, $request->parsedBody());
-            $metadata = $this->validator->normalizeMetadata($fields);
-            $recordedAt = $this->validator->normalizeRecordedAt($fields['grabado_en'] ?? null, $now);
-
-            $size = (int) filesize($payload->temporaryPath);
-            $id = Ulid::generate($this->clock);
-
-            try {
-                $relativePath = $this->storage->store($payload->temporaryPath, $device->id, $id, $format);
-            } catch (StorageException $exception) {
-                $this->logger->error('Fallo el almacenamiento del audio', [
-                    'dispositivo' => $device->id,
-                    'error' => $exception->getMessage(),
-                ]);
-
-                throw HttpException::serverError('No se pudo almacenar la grabacion.', $exception);
-            }
-
-            $recording = new Recording(
-                id: $id,
-                deviceId: $device->id,
-                certificateFingerprint: $device->certificateFingerprint(),
-                format: $format->name,
-                mediaType: $format->canonicalMediaType,
-                sizeBytes: $size,
-                sha256: $sha256,
-                relativePath: $relativePath,
-                originalFilename: $payload->clientFilename,
-                recordedAt: $recordedAt,
-                receivedAt: gmdate('Y-m-d\TH:i:s\Z', $now),
-                metadata: $metadata,
+            return $this->storeFile(
+                $payload->temporaryPath,
+                $device,
+                $campos,
+                $payload->clientFilename,
+                $payload->declaredMediaType,
+                $request->header('x-audio-sha256'),
             );
-
-            try {
-                $this->repository->save($recording);
-            } catch (PDOException $exception) {
-                // La carrera de dos envios identicos la resuelve el indice unico.
-                $duplicate = $this->repository->findByChecksum($device->id, $sha256);
-                $this->storage->delete($relativePath);
-
-                if ($duplicate !== null) {
-                    return new StoreRecordingResult($duplicate, true);
-                }
-
-                throw HttpException::serverError('No se pudo registrar la grabacion.', $exception);
-            }
-
-            $this->repository->touchDevice(
-                $device->id,
-                $device->certificateFingerprint(),
-                $recording->receivedAt,
-                $size,
-                1,
-            );
-
-            $this->logger->info('Grabacion recibida', [
-                'dispositivo' => $device->id,
-                'grabacion' => $id,
-                'formato' => $format->name,
-                'tamano_bytes' => $size,
-                'ruta' => $relativePath,
-            ]);
-
-            return new StoreRecordingResult($recording, false);
         } finally {
             $payload->discard();
         }
+    }
+
+    /**
+     * Almacena un archivo de audio ya materializado en disco.
+     *
+     * Se usa tanto desde POST /v1/grabaciones como desde el endpoint de
+     * eventos de deteccion, que recibe el WAV como parte de un multipart
+     * junto al JSON del evento.
+     *
+     * @param array<string,mixed> $campos metadatos declarados por el dispositivo
+     */
+    public function storeFile(
+        string $temporaryPath,
+        DeviceIdentity $device,
+        array $campos = [],
+        ?string $originalFilename = null,
+        ?string $declaredMediaType = null,
+        string $declaredSha256 = '',
+    ): StoreRecordingResult {
+        $format = $this->validator->validateFile($temporaryPath, $declaredMediaType);
+        $sha256 = $this->validator->verifyChecksum($temporaryPath, $declaredSha256);
+
+        $existing = $this->repository->findByChecksum($device->id, $sha256);
+        if ($existing !== null) {
+            $this->logger->info('Grabacion duplicada ignorada', [
+                'dispositivo' => $device->id,
+                'grabacion' => $existing->id,
+                'sha256' => $sha256,
+            ]);
+
+            return new StoreRecordingResult($existing, true);
+        }
+
+        $now = $this->clock->now();
+        $metadata = $this->validator->normalizeMetadata($campos);
+        $recordedAt = $this->validator->normalizeRecordedAt($campos['grabado_en'] ?? null, $now);
+
+        $size = (int) filesize($temporaryPath);
+        $id = Ulid::generate($this->clock);
+
+        try {
+            $relativePath = $this->storage->store($temporaryPath, $device->id, $id, $format);
+        } catch (StorageException $exception) {
+            $this->logger->error('Fallo el almacenamiento del audio', [
+                'dispositivo' => $device->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            throw HttpException::serverError('No se pudo almacenar la grabacion.', $exception);
+        }
+
+        $recording = new Recording(
+            id: $id,
+            deviceId: $device->id,
+            certificateFingerprint: $device->certificateFingerprint(),
+            format: $format->name,
+            mediaType: $format->canonicalMediaType,
+            sizeBytes: $size,
+            sha256: $sha256,
+            relativePath: $relativePath,
+            originalFilename: $originalFilename,
+            recordedAt: $recordedAt,
+            receivedAt: gmdate('Y-m-d\TH:i:s\Z', $now),
+            metadata: $metadata,
+        );
+
+        try {
+            $this->repository->save($recording);
+        } catch (PDOException $exception) {
+            // La carrera de dos envios identicos la resuelve el indice unico.
+            $duplicate = $this->repository->findByChecksum($device->id, $sha256);
+            $this->storage->delete($relativePath);
+
+            if ($duplicate !== null) {
+                return new StoreRecordingResult($duplicate, true);
+            }
+
+            throw HttpException::serverError('No se pudo registrar la grabacion.', $exception);
+        }
+
+        $this->repository->touchDevice(
+            $device->id,
+            $device->certificateFingerprint(),
+            $recording->receivedAt,
+            $size,
+            1,
+        );
+
+        $this->logger->info('Grabacion recibida', [
+            'dispositivo' => $device->id,
+            'grabacion' => $id,
+            'formato' => $format->name,
+            'tamano_bytes' => $size,
+            'ruta' => $relativePath,
+        ]);
+
+        return new StoreRecordingResult($recording, false);
     }
 
     public function find(string $id): Recording

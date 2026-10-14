@@ -7,6 +7,7 @@ namespace Jocotoco\Tests\Support;
 use Jocotoco\Application;
 use Jocotoco\Http\Request;
 use Jocotoco\Http\Response;
+use Jocotoco\Http\UploadedFile;
 use Jocotoco\Support\FrozenClock;
 use PHPUnit\Framework\TestCase;
 
@@ -107,6 +108,77 @@ abstract class ApiTestCase extends TestCase
             $server,
             [],
             $body,
+        );
+    }
+
+    /**
+     * Peticion multipart/form-data con campos de texto y, opcionalmente, un
+     * archivo: es como envia el monitor sus eventos de deteccion.
+     *
+     * @param array<string,string> $campos
+     */
+    protected function multipart(
+        string $path,
+        ?string $clientPem,
+        array $campos = [],
+        ?string $archivo = null,
+        string $campoArchivo = 'audio',
+        string $tipoArchivo = 'audio/wav',
+        string $verify = 'SUCCESS',
+    ): Request {
+        $server = [
+            'REQUEST_METHOD' => 'POST',
+            'REQUEST_URI' => $path,
+            'CONTENT_TYPE' => 'multipart/form-data; boundary=----jocotoco',
+            'REMOTE_ADDR' => '10.0.0.5',
+        ];
+
+        if ($clientPem !== null) {
+            $server['SSL_CLIENT_VERIFY'] = $verify;
+            $server['SSL_CLIENT_CERT'] = CertificateFactory::escape($clientPem);
+        }
+
+        $archivos = [];
+        if ($archivo !== null) {
+            $archivos[] = new UploadedFile(
+                $campoArchivo,
+                $archivo,
+                basename($archivo),
+                $tipoArchivo,
+                (int) (@filesize($archivo) ?: 0),
+            );
+        }
+
+        return new Request(
+            'POST',
+            rtrim($path, '/'),
+            ['content-type' => 'multipart/form-data; boundary=----jocotoco'],
+            [],
+            $server,
+            $archivos,
+            null,
+            $campos,
+        );
+    }
+
+    /**
+     * Peticion con cuerpo JSON, como la telemetria del monitor.
+     *
+     * @param array<string,mixed> $cuerpo
+     */
+    protected function json(string $path, ?string $clientPem, array $cuerpo, string $verify = 'SUCCESS'): Request
+    {
+        $archivo = $this->tmp->child('cuerpo-' . bin2hex(random_bytes(4)) . '.json');
+        file_put_contents($archivo, json_encode($cuerpo, JSON_UNESCAPED_SLASHES));
+
+        return $this->request(
+            'POST',
+            $path,
+            $clientPem,
+            ['Content-Type' => 'application/json'],
+            $archivo,
+            [],
+            $verify,
         );
     }
 

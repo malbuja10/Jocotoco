@@ -52,6 +52,18 @@ return [
     'allowed_formats' => ['wav', 'flac', 'ogg', 'opus', 'mp3'],
     'recorded_at_future_tolerance_seconds' => 300,
 
+    // --- Eventos de deteccion (POST /api/sincronizar) --------------------
+    // Limites sobre el WAV que acompana al evento. El audio manda sobre lo
+    // declarado en el JSON: la duracion y el formato se leen del archivo.
+    'event_max_data_bytes' => 65536,
+    'event_max_duration_seconds' => 300,
+    'event_allowed_sample_rates' => [8000, 16000, 22050, 32000, 44100, 48000, 96000, 192000],
+    'event_max_channels' => 2,
+
+    // --- Telemetria (POST /api/telemetry/*) ------------------------------
+    'telemetry_max_records' => 1000,
+    'telemetry_max_body_bytes' => 1048576,
+
     // --- Inscripcion automatica de dispositivos --------------------------
     // Un dispositivo sin certificado presenta un secreto de fabrica en
     // POST /v1/inscripcion y recibe un token de un solo uso para step-ca.

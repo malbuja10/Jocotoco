@@ -28,6 +28,32 @@ final class AudioFactory
             . $data;
     }
 
+    /**
+     * WAV a medida: sirve para probar los limites del contrato (frecuencia,
+     * canales, profundidad, duracion) y formatos que no son PCM.
+     */
+    public static function wavPersonalizado(
+        int $sampleRate = 16000,
+        int $canales = 1,
+        int $bits = 16,
+        float $segundos = 1.0,
+        int $formato = 1,
+    ): string {
+        $bytesPorMuestra = intdiv($bits, 8) * $canales;
+        $muestras = (int) round($sampleRate * $segundos);
+        $data = str_repeat(str_repeat("\x01", $bytesPorMuestra), max($muestras, 0));
+        $dataSize = strlen($data);
+        $bytesPorSegundo = $sampleRate * $bytesPorMuestra;
+
+        return 'RIFF'
+            . pack('V', 36 + $dataSize)
+            . 'WAVE'
+            . 'fmt ' . pack('V', 16)
+            . pack('vvVVvv', $formato, $canales, $sampleRate, $bytesPorSegundo, $bytesPorMuestra, $bits)
+            . 'data' . pack('V', $dataSize)
+            . $data;
+    }
+
     public static function flac(int $padding = 4096): string
     {
         return 'fLaC' . "\x00\x00\x00\x22" . str_repeat("\x00", 34) . random_bytes($padding);

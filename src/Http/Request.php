@@ -190,6 +190,33 @@ final class Request
         return $this->query($name, $default);
     }
 
+    /**
+     * Cuerpo de la peticion interpretado como objeto JSON.
+     *
+     * @return array<string,mixed>
+     * @throws \JsonException si el cuerpo no es JSON valido
+     */
+    public function json(int $maximoBytes = 1048576): array
+    {
+        if (!is_resource($this->body)) {
+            return [];
+        }
+
+        $bruto = (string) stream_get_contents($this->body, $maximoBytes + 1);
+
+        if (strlen($bruto) > $maximoBytes) {
+            throw new \JsonException('El cuerpo JSON excede el tamano permitido.', 413);
+        }
+
+        if (trim($bruto) === '') {
+            return [];
+        }
+
+        $datos = json_decode($bruto, true, 64, JSON_THROW_ON_ERROR);
+
+        return is_array($datos) ? $datos : [];
+    }
+
     /** @return resource|null */
     public function body()
     {

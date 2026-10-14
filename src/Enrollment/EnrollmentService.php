@@ -152,7 +152,10 @@ final class EnrollmentService
 
         // "token" es el campo que consume el cliente; el resto le ahorra
         // tener que llevar la URL y la huella de la CA en su configuracion.
+        // "status" lo documenta el contrato del monitor; el cliente actual
+        // solo lee "token", pero se envia para cumplir la especificacion.
         return [
+            'status' => 'authorized',
             'token' => $token,
             'device_id' => $deviceId,
             'expira_en' => $this->config->string('enrollment_token_duration'),
