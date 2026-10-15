@@ -49,6 +49,7 @@ contrasenas, la identidad es el certificado y la renueva `step-cli` sola.
 | `deploy/scripts/` | Instalacion de step-ca y del API en Ubuntu 24.04 (`05-activar-api.sh` activa el sitio con reversion automatica) |
 | `deploy/raspberry/` | Cliente del dispositivo en bash (step-cli + curl + systemd) |
 | `deploy/raspberry/python/` | Cliente equivalente en Python, para integrarlo en un programa propio |
+| `deploy/herramientas/jocotoco-probar` | Prueba los cuatro endpoints contra un API desplegado, desde cualquier escritorio |
 | `deploy/apache/`, `deploy/php/`, `deploy/systemd/` | Configuracion de servicio |
 | `docs/` | API, inscripcion, despliegue, dispositivos y decisiones de diseno |
 
@@ -118,6 +119,10 @@ Jocotoco*: la respuesta punto por punto a ese documento (URLs definitivas,
 politica mTLS, limites, unidades, deduplicacion y retencion) esta en
 [`docs/CONTRATO-MONITOR.md`](docs/CONTRATO-MONITOR.md), y la especificacion
 formal en [`docs/openapi.yaml`](docs/openapi.yaml).
+
+Para probarlos desde un escritorio Ubuntu (certificado de cliente propio,
+`jocotoco-probar`, Postman y curl a mano) vea
+[`docs/PROBAR-DESDE-ESCRITORIO.md`](docs/PROBAR-DESDE-ESCRITORIO.md).
 
 La referencia completa, con todos los codigos de error, esta en
 [`docs/API.md`](docs/API.md).

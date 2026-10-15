@@ -1,0 +1,277 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# Prueba los cuatro endpoints del monitor contra un API ya desplegado, desde
+# cualquier maquina con curl y un certificado de cliente.
+#
+#   jocotoco-probar                      # prueba todo con un WAV generado
+#   jocotoco-probar --audio grabacion.wav
+#   jocotoco-probar --solo evento
+#
+# Parametros (o variables de entorno JOCOTOCO_*):
+#   --url   https://dev.minkafab.com:8444   (JOCOTOCO_URL)
+#   --cert  ~/.jocotoco/cliente.crt         (JOCOTOCO_CERT)
+#   --key   ~/.jocotoco/cliente.key         (JOCOTOCO_KEY)
+#   --ca    ~/.jocotoco/root_ca.crt         (JOCOTOCO_CA)
+#   --audio <archivo.wav>   usa ese audio en vez de generar uno
+#   --solo  salud|identidad|evento|voltaje|estado|audio|consultas
+#   --verboso               imprime el cuerpo completo de cada respuesta
+#
+# Devuelve 0 si todas las comprobaciones pasan.
+# ---------------------------------------------------------------------------
+set -uo pipefail
+
+URL="${JOCOTOCO_URL:-https://dev.minkafab.com:8444}"
+CERT="${JOCOTOCO_CERT:-$HOME/.jocotoco/cliente.crt}"
+LLAVE="${JOCOTOCO_KEY:-$HOME/.jocotoco/cliente.key}"
+CA="${JOCOTOCO_CA:-$HOME/.jocotoco/root_ca.crt}"
+AUDIO=""
+SOLO="todo"
+VERBOSO=0
+# Argumentos extra para curl (por ejemplo --resolve o --noproxy en pruebas).
+read -r -a EXTRA <<< "${JOCOTOCO_CURL_EXTRA:-}"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --url) URL="$2"; shift 2 ;;
+        --cert) CERT="$2"; shift 2 ;;
+        --key) LLAVE="$2"; shift 2 ;;
+        --ca) CA="$2"; shift 2 ;;
+        --audio) AUDIO="$2"; shift 2 ;;
+        --solo) SOLO="$2"; shift 2 ;;
+        --verboso|-v) VERBOSO=1; shift ;;
+        -h|--help) sed -n '3,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) echo "Parametro desconocido: $1" >&2; exit 1 ;;
+    esac
+done
+
+URL="${URL%/}"
+command -v curl >/dev/null || { echo "Falta curl: sudo apt-get install -y curl" >&2; exit 1; }
+
+for archivo in "$CERT" "$LLAVE" "$CA"; do
+    [[ -r "$archivo" ]] || {
+        echo "No puedo leer $archivo" >&2
+        echo "Indique --cert/--key/--ca, o copie ahi su certificado de cliente." >&2
+        exit 1
+    }
+done
+
+TRABAJO="$(mktemp -d)"
+trap 'rm -rf "$TRABAJO"' EXIT
+
+# --- Audio de prueba -------------------------------------------------------
+# WAV PCM 16 kHz, mono, 16 bits, 1 segundo de silencio. Sin dependencias:
+# cabecera RIFF escrita a mano y los datos desde /dev/zero.
+generar_wav() {
+    local destino="$1"
+    {
+        printf 'RIFF'; printf '\x24\x7d\x00\x00'; printf 'WAVE'
+        printf 'fmt '; printf '\x10\x00\x00\x00'
+        printf '\x01\x00'              # PCM
+        printf '\x01\x00'              # 1 canal
+        printf '\x80\x3e\x00\x00'      # 16000 Hz
+        printf '\x00\x7d\x00\x00'      # 32000 bytes/s
+        printf '\x02\x00'              # alineacion
+        printf '\x10\x00'              # 16 bits
+        printf 'data'; printf '\x00\x7d\x00\x00'
+        # Silencio, salvo unas muestras al azar: asi dos ejecuciones no
+        # generan el mismo sha256 y el API no las toma por un reenvio.
+        head -c 31968 /dev/zero
+        head -c 32 /dev/urandom
+    } > "$destino"
+}
+
+if [[ -n "$AUDIO" ]]; then
+    [[ -r "$AUDIO" ]] || { echo "No puedo leer el audio $AUDIO" >&2; exit 1; }
+else
+    AUDIO="$TRABAJO/prueba.wav"
+    generar_wav "$AUDIO"
+fi
+
+# --- Utilidades ------------------------------------------------------------
+ACIERTOS=0
+FALLOS=0
+MARCA="$(date +%s)"
+EVENTO_ID="prueba-${MARCA}-$$"
+
+verde()  { printf '\033[32m%s\033[0m' "$1"; }
+rojo()   { printf '\033[31m%s\033[0m' "$1"; }
+
+# pedir <titulo> <esperado> <curl args...>
+# <esperado> admite varios codigos separados por "|" (ej. "201|200").
+# Deja el cuerpo en $CUERPO y las cabeceras en $CABECERAS.
+pedir() {
+    local titulo="$1" esperado="$2"; shift 2
+    local codigo
+    # Si curl no llega a responder (fallo de TLS, host inalcanzable) no crea
+    # estos archivos: se vacian antes para no leer la respuesta anterior.
+    : > "$TRABAJO/cuerpo"; : > "$TRABAJO/cabeceras"; : > "$TRABAJO/error"
+    codigo="$(curl -sS "${EXTRA[@]}" --cacert "$CA" \
+        -o "$TRABAJO/cuerpo" -D "$TRABAJO/cabeceras" -w '%{http_code}' "$@" 2>"$TRABAJO/error")"
+    # Sin los bytes nulos: la descarga de un WAV tambien pasa por aqui.
+    CUERPO="$(tr -d '\000' < "$TRABAJO/cuerpo" 2>/dev/null | head -c 4000)"
+    CABECERAS="$(cat "$TRABAJO/cabeceras" 2>/dev/null)"
+
+    if [[ "|$esperado|" == *"|$codigo|"* ]]; then
+        printf '  %s  %-46s HTTP %s\n' "$(verde '✔')" "$titulo" "$codigo"
+        ACIERTOS=$((ACIERTOS + 1))
+    else
+        printf '  %s  %-46s HTTP %s (esperaba %s)\n' "$(rojo '✘')" "$titulo" "${codigo:-sin respuesta}" "${esperado//|/ o }"
+        [[ -s "$TRABAJO/error" ]] && sed 's/^/        /' "$TRABAJO/error"
+        [[ -n "$CUERPO" ]] && echo "$CUERPO" | head -12 | sed 's/^/        /'
+        FALLOS=$((FALLOS + 1))
+        return 1
+    fi
+
+    (( VERBOSO )) && [[ -n "$CUERPO" ]] && echo "$CUERPO" | sed 's/^/        /'
+    return 0
+}
+
+# Lee un campo simple del ultimo cuerpo JSON sin depender de jq.
+campo() {
+    echo "$CUERPO" | grep -o "\"$1\"[[:space:]]*:[[:space:]]*\"\{0,1\}[^\",}]*" \
+        | head -1 | sed 's/.*:[[:space:]]*"\{0,1\}//'
+}
+
+toca() { [[ "$SOLO" == "todo" || "$SOLO" == "$1" ]]; }
+
+CLIENTE=(--cert "$CERT" --key "$LLAVE")
+
+echo
+echo "API:   $URL"
+echo "Cert:  $CERT"
+echo "Audio: $AUDIO ($(wc -c < "$AUDIO") bytes)"
+echo
+
+# --- 1. Salud y identidad --------------------------------------------------
+if toca salud; then
+    echo "Conectividad"
+    pedir "GET /v1/salud (sin certificado)" 200 "$URL/v1/salud"
+    echo
+fi
+
+if toca identidad; then
+    echo "Identidad del certificado"
+    if pedir "GET /v1/yo" 200 "${CLIENTE[@]}" "$URL/v1/yo"; then
+        DISPOSITIVO="$(campo dispositivo)"
+        echo "        dispositivo: ${DISPOSITIVO:-?}"
+    fi
+    echo
+fi
+
+# --- 2. Evento de deteccion + WAV -----------------------------------------
+if toca evento; then
+    echo "1/4  POST /api/sincronizar   (evento + WAV)"
+    DATOS="{\"event_id\":\"$EVENTO_ID\",\"threat_type\":\"chainsaw\",\"confidence_score\":0.87,\"audio_path\":\"/home/pi/monitor/audio/prueba.wav\",\"timestamp\":$MARCA,\"duration_sec\":1.0,\"sample_rate\":16000,\"channels\":1,\"bit_depth\":16}"
+
+    if pedir "evento nuevo" 201 "${CLIENTE[@]}" \
+        -F "data=$DATOS" -F "audio=@$AUDIO;type=audio/wav" "$URL/api/sincronizar"; then
+        GRABACION="$(campo grabacion_id)"
+        echo "        evento $(campo id) · grabacion ${GRABACION:-?}"
+    fi
+
+    if pedir "mismo envio otra vez (idempotencia)" 200 "${CLIENTE[@]}" \
+        -F "data=$DATOS" -F "audio=@$AUDIO;type=audio/wav" "$URL/api/sincronizar"; then
+        if grep -qi '^Idempotent-Replay: true' <<< "$CABECERAS"; then
+            echo "        $(verde 'Idempotent-Replay: true')  (no se duplico)"
+        else
+            echo "        $(rojo 'falta la cabecera Idempotent-Replay')"
+            FALLOS=$((FALLOS + 1))
+        fi
+    fi
+
+    pedir "evento con device_id ajeno (debe fallar)" 403 "${CLIENTE[@]}" \
+        -F "data={\"event_id\":\"ajeno-$MARCA\",\"device_id\":\"no-soy-yo\"}" \
+        -F "audio=@$AUDIO;type=audio/wav" "$URL/api/sincronizar"
+
+    echo 'no soy un wav' > "$TRABAJO/falso.wav"
+    pedir "archivo que no es WAV (debe fallar)" 415 "${CLIENTE[@]}" \
+        -F "data={\"event_id\":\"nowav-$MARCA\"}" \
+        -F "audio=@$TRABAJO/falso.wav;type=audio/wav" "$URL/api/sincronizar"
+    echo
+fi
+
+# --- 3. Voltaje ------------------------------------------------------------
+if toca voltaje; then
+    echo "2/4  POST /api/telemetry/voltage"
+    LOTE="{\"voltage\":[{\"timestamp\":$MARCA,\"value\":12.4},{\"timestamp\":$((MARCA-300)),\"value\":12.1}]}"
+    if pedir "lote de 2 lecturas" 200 "${CLIENTE[@]}" \
+        -H 'Content-Type: application/json' -d "$LOTE" "$URL/api/telemetry/voltage"; then
+        echo "        guardadas=$(campo guardadas) duplicadas=$(campo duplicadas)"
+    fi
+    if pedir "mismo lote otra vez (deduplicacion)" 200 "${CLIENTE[@]}" \
+        -H 'Content-Type: application/json' -d "$LOTE" "$URL/api/telemetry/voltage"; then
+        echo "        guardadas=$(campo guardadas) duplicadas=$(campo duplicadas)"
+    fi
+    echo
+fi
+
+# --- 4. Estado del dispositivo --------------------------------------------
+if toca estado; then
+    echo "3/4  POST /api/telemetry/status"
+    ESTADO="{\"device_telemetry\":[{\"timestamp\":$MARCA,\"cpu_temp\":48.2,\"cpu_usage_pct\":14.5,\"ram_usage_pct\":37.1,\"disk_free_gb\":21.8,\"disk_usage_pct\":32.0,\"uptime_hours\":76.4}]}"
+    if pedir "estado del equipo" 200 "${CLIENTE[@]}" \
+        -H 'Content-Type: application/json' -d "$ESTADO" "$URL/api/telemetry/status"; then
+        echo "        guardadas=$(campo guardadas) duplicadas=$(campo duplicadas)"
+    fi
+    pedir "metrica fuera de rango (debe fallar)" 422 "${CLIENTE[@]}" \
+        -H 'Content-Type: application/json' \
+        -d "{\"device_telemetry\":[{\"timestamp\":$MARCA,\"cpu_temp\":400}]}" \
+        "$URL/api/telemetry/status"
+    echo
+fi
+
+# --- 5. Audio suelto -------------------------------------------------------
+if toca audio; then
+    echo "4/4  POST /v1/grabaciones   (audio sin evento)"
+    # Con un WAV generado se usa uno distinto del que ya viajo en el evento;
+    # con --audio se reutiliza el del usuario y el API puede responder 200.
+    SUELTO="$AUDIO"
+    if [[ "$AUDIO" == "$TRABAJO/prueba.wav" ]]; then
+        SUELTO="$TRABAJO/suelto.wav"
+        generar_wav "$SUELTO"
+    fi
+
+    SHA=""
+    command -v sha256sum >/dev/null && SHA="$(sha256sum "$SUELTO" | cut -d' ' -f1)"
+    CABECERA_SHA=(); [[ -n "$SHA" ]] && CABECERA_SHA=(-H "X-Audio-SHA256: $SHA")
+
+    if pedir "subida binaria" "201|200" "${CLIENTE[@]}" \
+        -H 'Content-Type: audio/wav' "${CABECERA_SHA[@]}" \
+        -H "X-Nombre-Archivo: $(basename "$SUELTO")" \
+        --data-binary "@$SUELTO" "$URL/v1/grabaciones"; then
+        ID="$(campo id)"
+        if [[ -n "$ID" ]]; then
+            if pedir "descarga de vuelta" 200 "${CLIENTE[@]}" \
+                "$URL/v1/grabaciones/$ID/audio"; then
+                # "pedir" ya dejo el cuerpo (el WAV) en $TRABAJO/cuerpo.
+                if cmp -s "$SUELTO" "$TRABAJO/cuerpo"; then
+                    echo "        $(verde 'identico byte a byte')"
+                else
+                    echo "        $(rojo 'el archivo descargado no coincide')"
+                    FALLOS=$((FALLOS + 1))
+                fi
+            fi
+        fi
+    fi
+    echo
+fi
+
+# --- 6. Consultas ----------------------------------------------------------
+if toca consultas; then
+    echo "Consulta de lo recibido"
+    pedir "GET /v1/eventos" 200 "${CLIENTE[@]}" "$URL/v1/eventos" \
+        && echo "        total: $(campo total)"
+    pedir "GET /v1/telemetria" 200 "${CLIENTE[@]}" "$URL/v1/telemetria"
+    pedir "GET /v1/grabaciones" 200 "${CLIENTE[@]}" "$URL/v1/grabaciones" \
+        && echo "        total: $(campo total)"
+    echo
+fi
+
+echo "---------------------------------------------------------------"
+if (( FALLOS == 0 )); then
+    echo " $(verde "Todo bien: $ACIERTOS comprobaciones")"
+else
+    echo " $(rojo "$FALLOS fallo(s)") de $((ACIERTOS + FALLOS)) comprobaciones"
+fi
+echo "---------------------------------------------------------------"
+exit $(( FALLOS > 0 ))
