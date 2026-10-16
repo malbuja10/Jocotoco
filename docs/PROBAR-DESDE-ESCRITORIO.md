@@ -25,7 +25,7 @@ La huella debe coincidir con la que anoto al instalar la CA.
 
 ```bash
 cd /opt/src/jocotoco/deploy/scripts
-sudo ./04-registrar-dispositivo.sh escritorio-pruebas --validez 60m
+sudo ./04-registrar-dispositivo.sh escritorio-pruebas
 # copie el TOKEN que imprime
 sudo STEPPATH=/root/.step step ca certificate escritorio-pruebas \
      /tmp/escritorio.crt /tmp/escritorio.key --token '<TOKEN>'

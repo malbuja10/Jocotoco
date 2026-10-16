@@ -52,7 +52,7 @@ como ya hace el codigo del monitor.
 | Punto | Decision |
 |-------|----------|
 | CA que emite los certificados de cliente | `Jocotoco Intermediate CA`, provisioner JWK `dispositivos` |
-| Vigencia del certificado del dispositivo | 30 dias por defecto, maximo 90; renovable antes de vencer y tambien despues (`allowRenewalAfterExpiry`), pensado para equipos sin Internet durante semanas |
+| Vigencia del certificado del dispositivo | 90 dias por defecto, hasta 270; renovable antes de vencer y tambien despues (`allowRenewalAfterExpiry`), pensado para equipos que pasan meses sin Internet |
 | Identidad | primer SAN DNS del certificado; si no hay, el CN |
 | Asociacion certificado ↔ `device_id` | el `device_id` del payload debe ser igual a esa identidad; si no, `403`. Si el payload no lo trae, se usa la del certificado |
 | Validacion de expiracion | la hace Apache en el handshake y la repite el API (tolerancia de reloj: 60 s) |
@@ -165,8 +165,8 @@ ni en los logs: el API registra el intento de alta y el resultado, jamas el
 secreto ni el token. Detalle del flujo en [`INSCRIPCION.md`](INSCRIPCION.md).
 
 Limites vigentes: hasta 5 tokens por dispositivo y hora (`429` al pasarse),
-10 fallos por IP y hora, y tokens de **60 minutos**, pensados para un enlace
-satelital lento. El alta esta deshabilitada por defecto
+10 fallos por IP y hora, y tokens de **24 horas**, para que un equipo pueda
+provisionarse al llegar a campo y no durante el viaje. El alta esta deshabilitada por defecto
 (`JOCOTOCO_ENROLLMENT_ENABLED=true` la activa).
 
 ## 9. Lo que el servidor no espera recibir

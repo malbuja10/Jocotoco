@@ -36,10 +36,10 @@ sea alcanzable desde los dispositivos (cortafuegos, NAT).
 ## 3. Obtener el token en el servidor
 
 ```bash
-sudo deploy/scripts/04-registrar-dispositivo.sh rpi-yanacocha-01 --validez 60m
+sudo deploy/scripts/04-registrar-dispositivo.sh rpi-yanacocha-01
 ```
 
-`--validez` es la vigencia del **token de alta** (60 minutos por defecto),
+`--validez` es la vigencia del **token de alta** (24 horas por defecto),
 no la del certificado. El token es de un solo uso.
 
 El nombre que elija (`rpi-yanacocha-01`) queda como CN y SAN DNS del
@@ -161,7 +161,7 @@ todavia sea valido, asi que con 24 h un equipo incomunicado un dia queda
 fuera. En el servidor:
 
 ```bash
-sudo ./07-vigencia-dispositivos.sh --dias 30
+sudo ./07-vigencia-dispositivos.sh            # 90 dias, renovable tras caducar
 ```
 
 Los equipos ya registrados toman la vigencia nueva en su siguiente

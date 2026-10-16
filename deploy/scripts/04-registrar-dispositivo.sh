@@ -6,17 +6,18 @@
 #
 # Ejecutar en el servidor de la CA:
 #   sudo ./04-registrar-dispositivo.sh rpi-yanacocha-01
-#   sudo ./04-registrar-dispositivo.sh rpi-yanacocha-01 --validez 60m
+#   sudo ./04-registrar-dispositivo.sh rpi-yanacocha-01 --validez 72h
 #
-# El token es de un solo uso y por defecto vence en 60 minutos: tiempo de
-# sobra para llegar al equipo por ssh, sin dejarlo valido indefinidamente.
+# El token es de un solo uso y por defecto vence en 24 horas: un equipo que
+# sale a campo puede provisionarse al llegar, sin que el token caduque en el
+# viaje. Suba o baje con --validez (ej. 72h para una salida de tres dias).
 # Entreguelo por un canal seguro y ejecute en la Raspberry
 # deploy/raspberry/bootstrap-dispositivo.sh
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
 DISPOSITIVO=""
-VALIDEZ="60m"
+VALIDEZ="24h"
 PROVISIONER="${PROVISIONER:-dispositivos}"
 STEPPATH="${STEPPATH:-/etc/step}"
 CA_DNS="${CA_DNS:-}"
@@ -33,14 +34,15 @@ done
 
 if [[ -z "$DISPOSITIVO" ]]; then
     cat >&2 <<USO
-Uso: sudo ./04-registrar-dispositivo.sh <nombre-del-dispositivo> [--validez 60m]
+Uso: sudo ./04-registrar-dispositivo.sh <nombre-del-dispositivo> [--validez 24h]
 
 El nombre queda como CN y SAN DNS del certificado, y es la identidad con
 la que el API registra las grabaciones (ej. rpi-yanacocha-01).
 
 --validez controla cuanto dura el TOKEN de alta (no el certificado):
-60m por defecto. La vigencia del certificado la fija la CA; para equipos
-sin conexion prolongada vea 07-vigencia-dispositivos.sh.
+24h por defecto, suficiente para provisionar el equipo al llegar a campo.
+La vigencia del certificado la fija la CA (90 dias); vea
+07-vigencia-dispositivos.sh.
 USO
     exit 1
 fi

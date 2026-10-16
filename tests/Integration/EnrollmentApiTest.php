@@ -78,7 +78,7 @@ final class EnrollmentApiTest extends ApiTestCase
         self::assertSame('cabecera.cuerpo.firma', $cuerpo['token']);
         self::assertSame('rpi-yanacocha-01', $cuerpo['device_id']);
         self::assertSame('https://ca.example.org:8443', $cuerpo['ca_url']);
-        self::assertSame('60m', $cuerpo['expira_en']);
+        self::assertSame('24h', $cuerpo['expira_en']);
     }
 
     public function testLaInscripcionEstaDeshabilitadaPorDefecto(): void

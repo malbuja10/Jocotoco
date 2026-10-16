@@ -25,7 +25,7 @@ Respuesta `200`:
 {
   "token": "eyJhbGciOiJFUzI1NiIs...",
   "device_id": "rpi-yanacocha-01",
-  "expira_en": "60m",
+  "expira_en": "24h",
   "ca_url": "https://dev.midominio.com:8443",
   "huella_raiz": "c77163bde598a9bdea25fb91c8544dad8c3269c05e7532c57ec91dae5c63fe91",
   "tokens_restantes": 1
@@ -211,7 +211,8 @@ def auto_register_device() -> bool:
 
 Conseguir la identidad es la mitad; hay que mantenerla y usarla:
 
-1. **Renovacion.** El certificado caduca (24 h por defecto). Instale el
+1. **Renovacion.** El certificado caduca (90 dias con la CA del proyecto;
+   24 h si la CA quedo con los claims de fabrica). Instale el
    temporizador de `deploy/raspberry/systemd/` o replique su efecto:
 
    ```bash
@@ -258,9 +259,12 @@ acotada:
 - deshabilitada por defecto, y el secreto debe tener 16 caracteres o mas;
 - `device_id` tiene que ser un hostname en minusculas, y puede exigirse que
   este en una lista blanca (`--dispositivos`);
-- tope de tokens por dispositivo (2 por defecto: el segundo cubre una
-  reinstalacion, no una fabrica de identidades);
+- tope de tokens por dispositivo y hora (5 por defecto): la ventana se
+  renueva sola, asi que un equipo con problemas de enlace no queda fuera,
+  pero nadie puede pedir tokens en masa;
 - tope de intentos fallidos por IP (10 por hora);
+- el token vale 24 h y es de un solo uso: alcanza para provisionar el
+  equipo al llegar a campo, no para guardarlo de reserva;
 - comparacion del secreto en tiempo constante (`hash_equals`);
 - cada intento queda registrado con IP, resultado y motivo;
 - un dispositivo se bloquea sin tocar la CA.

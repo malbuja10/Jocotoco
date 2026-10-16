@@ -14,7 +14,7 @@
 set -euo pipefail
 
 NOMBRE="${1:-}"
-DURACION="${2:-60m}"
+DURACION="${2:-24h}"
 STEPPATH="${STEPPATH:-/etc/step}"
 PROVISIONER="${PROVISIONER:-dispositivos}"
 

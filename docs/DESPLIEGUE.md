@@ -59,7 +59,7 @@ Eso no sirve para equipos que pasan semanas sin conexion, porque step-ca
 solo renueva certificados todavia vigentes. Para esos casos:
 
 ```bash
-sudo ./07-vigencia-dispositivos.sh --dias 30
+sudo ./07-vigencia-dispositivos.sh            # 90 dias, renovable tras caducar
 ```
 
 El script ajusta los claims del provisioner en `ca.json`, respalda la

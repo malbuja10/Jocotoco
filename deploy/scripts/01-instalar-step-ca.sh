@@ -196,10 +196,13 @@ else
         --provisioner="dispositivos" \
         --password-file="$clave_ca"
 
-    echo "==> Ampliando la vigencia maxima de los certificados de dispositivo a 24 h"
+    # 90 dias: los equipos de campo pueden pasar semanas sin conexion y
+    # step-ca solo renueva lo que todavia esta vigente. Se ajusta despues
+    # con 07-vigencia-dispositivos.sh.
+    echo "==> Vigencia de los certificados de dispositivo: 90 dias"
     runuser -u "$USUARIO_CA" -- env STEPPATH="$STEPPATH" \
         step ca provisioner update dispositivos \
-            --x509-default-dur=24h --x509-max-dur=24h --x509-min-dur=5m \
+            --x509-default-dur=2160h --x509-max-dur=2160h --x509-min-dur=5m \
             --admin-subject=step --password-file="$STEPPATH/password.txt" || \
         echo "    (ajuste los claims manualmente en $STEPPATH/config/ca.json si el comando fallo)"
 fi

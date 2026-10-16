@@ -22,7 +22,7 @@ GENERAR=false
 DOMINIO=""
 PUERTO=""
 DISPOSITIVOS=""
-MAX_TOKENS="2"
+MAX_TOKENS="5"
 POOL="/etc/php/8.3/fpm/pool.d/jocotoco.conf"
 STEPPATH="/etc/step"
 DESTINO="/srv/jocotoco"
@@ -98,7 +98,7 @@ poner_env() {
 poner_env JOCOTOCO_ENROLLMENT_ENABLED true
 poner_env JOCOTOCO_ENROLLMENT_SECRET "\"${SECRETO}\""
 poner_env JOCOTOCO_ENROLLMENT_MAX_TOKENS "$MAX_TOKENS"
-poner_env JOCOTOCO_ENROLLMENT_TOKEN_DURATION 60m
+poner_env JOCOTOCO_ENROLLMENT_TOKEN_DURATION 24h
 poner_env JOCOTOCO_CA_URL "https://${ca_dns}:${ca_puerto}"
 poner_env JOCOTOCO_CA_ROOT_FINGERPRINT "$huella"
 [[ -n "$DISPOSITIVOS" ]] && poner_env JOCOTOCO_ENROLLMENT_DEVICES "\"${DISPOSITIVOS}\""

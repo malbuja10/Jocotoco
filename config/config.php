@@ -83,7 +83,7 @@ return [
     'enrollment_token_window_seconds' => 3600,
     'enrollment_max_failures_per_ip' => 10,
     'enrollment_failure_window_seconds' => 3600,
-    'enrollment_token_duration' => '60m',
+    'enrollment_token_duration' => '24h',
     // El API no tiene la contrasena de la CA: pide el token a un envoltorio
     // con privilegios, autorizado por una regla de sudo acotada.
     'enrollment_token_command' => '/usr/bin/sudo -n /usr/local/sbin/jocotoco-emitir-token',

@@ -76,9 +76,9 @@ paths:
                 required: [status, token]
                 properties:
                   status: { type: string, const: authorized }
-                  token: { type: string, description: "Token de step-ca de un solo uso" }
+                  token: { type: string, description: "Token de step-ca de un solo uso, valido 24 h" }
                   device_id: { type: string }
-                  expira_en: { type: string, examples: ["60m"] }
+                  expira_en: { type: string, examples: ["24h"] }
                   ca_url: { type: [string, "null"] }
                   huella_raiz: { type: [string, "null"] }
                   tokens_restantes: { type: integer, description: "Los que quedan en la ventana de una hora" }

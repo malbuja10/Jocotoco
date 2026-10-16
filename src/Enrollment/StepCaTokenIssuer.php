@@ -22,12 +22,12 @@ final class StepCaTokenIssuer implements TokenIssuer
     /** @param list<string> $comando */
     public function __construct(
         private readonly array $comando,
-        private readonly string $duracion = '60m',
+        private readonly string $duracion = '24h',
         private readonly int $tiempoLimite = 20,
     ) {
     }
 
-    public static function fromCommandLine(string $comando, string $duracion = '60m'): self
+    public static function fromCommandLine(string $comando, string $duracion = '24h'): self
     {
         $partes = preg_split('/\s+/', trim($comando)) ?: [];
 

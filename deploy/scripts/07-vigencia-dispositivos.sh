@@ -3,18 +3,21 @@
 # Amplia la vigencia de los certificados de dispositivo, para equipos que
 # pasan semanas sin conexion (por ejemplo una Raspberry en campo).
 #
-# Uso:  sudo ./07-vigencia-dispositivos.sh --dias 30
-#       sudo ./07-vigencia-dispositivos.sh --dias 30 --permitir-renovar-expirados
+# Uso:  sudo ./07-vigencia-dispositivos.sh                 # 90 dias
+#       sudo ./07-vigencia-dispositivos.sh --dias 180
+#       sudo ./07-vigencia-dispositivos.sh --prohibir-renovar-expirados
 #
 # Por que: step-ca solo renueva un certificado que TODAVIA sea valido. Con
 # vigencia de 24 h, un equipo sin internet mas de un dia queda fuera y hay
 # que darlo de alta otra vez con un token nuevo.
 #
-# --permitir-renovar-expirados activa allowRenewalAfterExpiry: el equipo
-# puede renovar aunque su certificado ya haya caducado. Comodo en campo,
-# pero significa que quien tenga una copia del certificado y su llave puede
-# seguir renovando indefinidamente. Si lo usa, mantenga la lista blanca del
-# API (JOCOTOCO_ALLOWED_DEVICES) como interruptor real de baja.
+# allowRenewalAfterExpiry viene ACTIVADO: un equipo que estuvo mas tiempo
+# del previsto sin conexion puede renovar aunque su certificado ya haya
+# caducado, en vez de quedar fuera hasta que alguien viaje a la selva con un
+# token. A cambio, quien tenga una copia del certificado y su llave puede
+# seguir renovando indefinidamente: la baja real de un equipo se hace con la
+# lista blanca del API (JOCOTOCO_ALLOWED_DEVICES), no esperando a que caduque.
+# Con --prohibir-renovar-expirados se vuelve al comportamiento estricto.
 #
 # El script respalda ca.json, aplica los cambios, reinicia step-ca, EMITE UN
 # CERTIFICADO DE PRUEBA para comprobar que la vigencia es la pedida, y
@@ -22,10 +25,10 @@
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
-DIAS=30
+DIAS=90
 DIAS_MAX=""
 PROVISIONER="dispositivos"
-PERMITIR_EXPIRADOS=false
+PERMITIR_EXPIRADOS=true
 STEPPATH="${STEPPATH:-/etc/step}"
 CONFIG="$STEPPATH/config/ca.json"
 
@@ -35,6 +38,7 @@ while [[ $# -gt 0 ]]; do
         --dias-maximo) DIAS_MAX="$2"; shift 2 ;;
         --provisioner) PROVISIONER="$2"; shift 2 ;;
         --permitir-renovar-expirados) PERMITIR_EXPIRADOS=true; shift ;;
+        --prohibir-renovar-expirados) PERMITIR_EXPIRADOS=false; shift ;;
         *) echo "Parametro desconocido: $1" >&2; exit 1 ;;
     esac
 done
@@ -81,7 +85,7 @@ fi
 install -o step -g step -m 0600 "$tmp" "$CONFIG"
 rm -f "$tmp"
 echo "==> Vigencia nueva: ${DIAS} dias por defecto, hasta ${DIAS_MAX} dias"
-(( $(echo "$PERMITIR_EXPIRADOS" | grep -c true) )) && echo "    Renovacion tras caducidad: PERMITIDA"
+[[ "$PERMITIR_EXPIRADOS" == true ]] && echo "    Renovacion tras caducidad: PERMITIDA"
 
 restaurar() {
     echo "==> Restaurando ${respaldo}" >&2
@@ -149,7 +153,7 @@ cat <<RESUMEN
         /etc/jocotoco/tls/dispositivo.crt /etc/jocotoco/tls/dispositivo.key
 
  Los nuevos se registran igual que antes:
-   sudo ./04-registrar-dispositivo.sh rpi-yanacocha-01 --validez 60m
+   sudo ./04-registrar-dispositivo.sh rpi-yanacocha-01
 
  Respaldo de la configuracion previa: ${respaldo}
 ===========================================================================
