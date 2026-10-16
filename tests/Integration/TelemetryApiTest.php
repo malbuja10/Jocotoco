@@ -108,6 +108,69 @@ final class TelemetryApiTest extends ApiTestCase
             ->query('SELECT COUNT(*) FROM voltage_readings')->fetchColumn());
     }
 
+    public function testGuardaDosLecturasDistintasDelMismoSegundo(): void
+    {
+        // El monitor sella cada medida con int(time.time()): dos lecturas
+        // seguidas pueden caer en el mismo segundo y las dos son reales.
+        $marca = $this->clock->now() - 30;
+
+        $cuerpo = $this->decode($this->app->handle($this->json(
+            '/api/telemetry/voltage',
+            $this->ca->clientPem(self::DISPOSITIVO),
+            ['voltage' => [
+                ['timestamp' => $marca, 'value' => 12.42],
+                ['timestamp' => $marca, 'value' => 12.11],
+            ]],
+        )));
+
+        self::assertSame(2, $cuerpo['guardadas'], 'Ninguna medida se pierde por compartir el segundo.');
+        self::assertSame(0, $cuerpo['duplicadas']);
+        self::assertSame(2, (int) $this->app->database()->connection()
+            ->query('SELECT COUNT(*) FROM voltage_readings')->fetchColumn());
+    }
+
+    public function testElEstadoRepetidoSeDescartaPeroElDistintoNo(): void
+    {
+        $marca = $this->clock->now() - 30;
+        $registro = [
+            'timestamp' => $marca,
+            'cpu_temp' => 48.2,
+            'cpu_usage_pct' => 14.5,
+            'ram_usage_pct' => 37.1,
+            'disk_free_gb' => 21.8,
+            'disk_usage_pct' => 32.0,
+            'uptime_hours' => 76.4,
+        ];
+
+        $cuerpo = $this->decode($this->app->handle($this->json(
+            '/api/telemetry/status',
+            $this->ca->clientPem(self::DISPOSITIVO),
+            ['device_telemetry' => [
+                $registro,
+                $registro,                                    // reenvio exacto
+                array_merge($registro, ['cpu_temp' => 49.9]),  // otra medida
+            ]],
+        )));
+
+        self::assertSame(2, $cuerpo['guardadas']);
+        self::assertSame(1, $cuerpo['duplicadas']);
+    }
+
+    public function testAceptaUnTimestampIso8601(): void
+    {
+        $marca = $this->clock->now() - 120;
+
+        $response = $this->app->handle($this->json(
+            '/api/telemetry/voltage',
+            $this->ca->clientPem(self::DISPOSITIVO),
+            ['voltage' => [['timestamp' => gmdate('Y-m-d\TH:i:s\Z', $marca), 'value' => 12.4]]],
+        ));
+
+        self::assertSame(200, $response->status, $response->body);
+        self::assertSame($marca, (int) $this->app->database()->connection()
+            ->query('SELECT measured_at FROM voltage_readings')->fetchColumn());
+    }
+
     public function testCadaDispositivoGuardaSuPropiaTelemetria(): void
     {
         $marca = $this->clock->now() - 90;

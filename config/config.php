@@ -51,6 +51,10 @@ return [
     'min_upload_bytes' => 1024,
     'allowed_formats' => ['wav', 'flac', 'ogg', 'opus', 'mp3'],
     'recorded_at_future_tolerance_seconds' => 300,
+    // Zona en la que se interpretan las marcas ISO 8601 que llegan sin
+    // desfase horario: el monitor las genera con datetime.now(), que usa
+    // la hora local del equipo (TZ=America/Guayaquil en sus contenedores).
+    'device_timezone' => 'UTC',
 
     // --- Eventos de deteccion (POST /api/sincronizar) --------------------
     // Limites sobre el WAV que acompana al evento. El audio manda sobre lo
@@ -59,6 +63,10 @@ return [
     'event_max_duration_seconds' => 300,
     'event_allowed_sample_rates' => [8000, 16000, 22050, 32000, 44100, 48000, 96000, 192000],
     'event_max_channels' => 2,
+    // El monitor manda el evento sin audio cuando su WAV ya se borro. Se
+    // acepta igual (con la grabacion en null) para que esa fila no quede
+    // atascada en el equipo reintentandose para siempre.
+    'event_allow_missing_audio' => true,
 
     // --- Telemetria (POST /api/telemetry/*) ------------------------------
     'telemetry_max_records' => 1000,

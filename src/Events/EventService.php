@@ -13,6 +13,7 @@ use Jocotoco\Http\Request;
 use Jocotoco\Security\DeviceIdentity;
 use Jocotoco\Support\Clock;
 use Jocotoco\Support\Logger;
+use Jocotoco\Support\MarcaDeTiempo;
 use Jocotoco\Support\Ulid;
 use PDOException;
 
@@ -49,7 +50,15 @@ final class EventService
     /** @return array{evento:DetectionEvent,duplicado:bool} */
     public function receive(Request $request, DeviceIdentity $device): array
     {
-        if (!str_starts_with($request->contentType(), 'multipart/form-data')) {
+        // Lo normal es multipart con "data" y "audio". El monitor, cuando su
+        // WAV ya no esta en disco, manda solo el campo "data" y entonces su
+        // cliente HTTP usa x-www-form-urlencoded: tambien se acepta, porque
+        // en ese envio no hay archivo que acompanar.
+        $tipo = $request->contentType();
+        $esFormulario = str_starts_with($tipo, 'multipart/form-data')
+            || str_starts_with($tipo, 'application/x-www-form-urlencoded');
+
+        if (!$esFormulario) {
             throw HttpException::unsupportedMediaType(
                 'El evento debe enviarse como multipart/form-data con las partes "data" y "audio".',
             );
@@ -74,6 +83,22 @@ final class EventService
         }
 
         $archivo = $request->file('audio');
+
+        // El monitor envia el evento sin la parte "audio" cuando el WAV ya
+        // no esta en su disco. Rechazarlo dejaria esa fila atascada en el
+        // equipo para siempre, reintentandose en cada sincronizacion y
+        // ocupando sitio en el lote de 30 que sube por vez, asi que el
+        // evento se acepta sin audio y se deja constancia.
+        if ($archivo === null && $this->config->bool('event_allow_missing_audio')) {
+            $this->logger->warning('Evento recibido sin audio', [
+                'dispositivo' => $device->id,
+                'event_id' => $eventId,
+                'ruta_declarada' => $this->texto($datos['audio_path'] ?? null, 255),
+            ]);
+
+            return $this->registrar($datos, $device, $eventId, null, null);
+        }
+
         if ($archivo === null || !$archivo->isValid()) {
             $recibidas = array_map(static fn ($item): string => $item->field, $request->files());
 
@@ -105,8 +130,27 @@ final class EventService
             $archivo->clientMediaType,
         );
 
+        return $this->registrar($datos, $device, $eventId, $info, $resultado->recording->id);
+    }
+
+    /**
+     * Guarda el evento. Con $info y $grabacionId en null el evento llego
+     * sin audio: las caracteristicas se toman entonces de lo declarado en
+     * el JSON, que es todo lo que queda de esa grabacion.
+     *
+     * @param array<string,mixed> $datos
+     * @return array{evento:DetectionEvent,duplicado:bool}
+     */
+    private function registrar(
+        array $datos,
+        DeviceIdentity $device,
+        string $eventId,
+        ?WavInfo $info,
+        ?string $grabacionId,
+    ): array {
+
         $ahora = $this->clock->now();
-        $marca = $this->normalizarMarcaDeTiempo($datos['timestamp'] ?? null, $ahora);
+        $marca = $this->normalizarMarcaDeTiempo($datos['timestamp'] ?? null, $ahora, $eventId);
 
         $evento = new DetectionEvent(
             id: Ulid::generate($this->clock),
@@ -116,12 +160,12 @@ final class EventService
             confidenceScore: $this->numero($datos['confidence_score'] ?? null, 'confidence_score'),
             eventTimestamp: $marca,
             occurredAt: $marca !== null ? gmdate('Y-m-d\TH:i:s\Z', $marca) : null,
-            durationSec: $info->duracionSegundos,
-            sampleRate: $info->frecuenciaMuestreo,
-            channels: $info->canales,
-            bitDepth: $info->bitsPorMuestra,
+            durationSec: $info?->duracionSegundos ?? $this->numero($datos['duration_sec'] ?? null, 'duration_sec'),
+            sampleRate: $info?->frecuenciaMuestreo ?? $this->entero($datos['sample_rate'] ?? null),
+            channels: $info?->canales ?? $this->entero($datos['channels'] ?? null),
+            bitDepth: $info?->bitsPorMuestra ?? $this->entero($datos['bit_depth'] ?? null),
             declaredAudioPath: $this->texto($datos['audio_path'] ?? null, 255),
-            recordingId: $resultado->recording->id,
+            recordingId: $grabacionId,
             payload: $datos,
             receivedAt: gmdate('Y-m-d\TH:i:s\Z', $ahora),
         );
@@ -143,8 +187,8 @@ final class EventService
             'event_id' => $eventId,
             'clase' => $evento->threatType,
             'puntaje' => $evento->confidenceScore,
-            'grabacion' => $resultado->recording->id,
-            'duracion_sec' => $info->duracionSegundos,
+            'grabacion' => $grabacionId,
+            'duracion_sec' => $info?->duracionSegundos,
         ]);
 
         return ['evento' => $evento, 'duplicado' => false];
@@ -271,24 +315,32 @@ final class EventService
     }
 
     /**
-     * El contrato dice "normalmente epoch en segundos". Se acepta tambien en
-     * milisegundos, que es el error mas comun, y se rechaza lo que no sea
-     * una fecha plausible.
+     * El contrato dice "normalmente epoch en segundos", pero el monitor
+     * envia datetime.now().isoformat(). Se aceptan las dos formas (ver
+     * MarcaDeTiempo): el instante del dispositivo importa, porque un
+     * evento puede subirse dias despues de haberse detectado.
      */
-    private function normalizarMarcaDeTiempo(mixed $valor, int $ahora): ?int
+    private function normalizarMarcaDeTiempo(mixed $valor, int $ahora, string $eventId): ?int
     {
-        if (!is_numeric($valor)) {
+        if ($valor === null || $valor === '') {
             return $ahora;
         }
 
-        $marca = (int) $valor;
+        $marca = MarcaDeTiempo::interpretar($valor, $this->config->string('device_timezone'));
+        if ($marca === null) {
+            // No se rechaza el evento por esto: perder la deteccion es peor
+            // que fecharla con la hora de llegada, pero queda el aviso y el
+            // valor original sigue en el payload.
+            $this->logger->warning('El evento trae un "timestamp" que no se pudo interpretar', [
+                'event_id' => $eventId,
+                'valor' => is_scalar($valor) ? (string) $valor : gettype($valor),
+            ]);
 
-        if ($marca > 100_000_000_000) {   // viene en milisegundos
-            $marca = intdiv($marca, 1000);
+            return $ahora;
         }
 
         $tolerancia = $this->config->int('recorded_at_future_tolerance_seconds');
-        if ($marca < 946_684_800 || $marca > $ahora + $tolerancia) {   // antes de 2000 o en el futuro
+        if (!MarcaDeTiempo::esPlausible($marca, $ahora, $tolerancia)) {
             throw HttpException::badRequest(
                 sprintf('El campo "timestamp" no es una fecha plausible (%d).', $marca),
             );
@@ -306,6 +358,11 @@ final class EventService
         $texto = trim((string) $valor);
 
         return $texto === '' ? null : mb_substr($texto, 0, $maximo);
+    }
+
+    private function entero(mixed $valor): ?int
+    {
+        return is_numeric($valor) ? (int) $valor : null;
     }
 
     private function numero(mixed $valor, string $campo): ?float

@@ -222,8 +222,21 @@ Campos de `data`:
 | `threat_type` | string | no | etiqueta del modelo, se guarda literal (maximo 64) |
 | `confidence_score` | number | no | `400` si no es numerico |
 | `audio_path` | string | no | ruta en la Raspberry; se guarda como referencia y nunca se lee |
-| `timestamp` | number | no | epoch UTC en segundos (se aceptan milisegundos); si falta, la hora del servidor |
+| `timestamp` | number o string | no | epoch UTC en segundos (se aceptan milisegundos) o ISO 8601; si falta o no se entiende, la hora del servidor |
 | `duration_sec`, `sample_rate`, `channels`, `bit_depth` | number | no | se comparan con el WAV; manda el archivo |
+
+Una cadena ISO 8601 con desfase (`2026-10-13T20:34:16-05:00`, `...Z`) se
+toma tal cual; una sin desfase —como la que produce `datetime.now()` en el
+monitor— se interpreta en la zona de `device_timezone`. Asi un evento
+detectado hace tres dias y subido hoy conserva su fecha real.
+
+Si la peticion no trae la parte `audio` (el monitor la omite cuando su WAV
+ya se borro del disco), el evento se guarda igual con `grabacion_id` en
+`null` y las caracteristicas que venian declaradas en el JSON; en ese caso
+tambien se acepta `application/x-www-form-urlencoded`, que es lo que manda
+el cliente del monitor cuando no adjunta archivo. Con
+`JOCOTOCO_EVENT_ALLOW_MISSING_AUDIO=false` se vuelve a exigir el audio
+(`400`).
 
 Limites del audio: WAV PCM o IEEE float, duracion util entre 0 y
 `event_max_duration_seconds` (300 s), frecuencia dentro de
@@ -316,8 +329,10 @@ Rangos aceptados: `cpu_temp` -50 a 150 °C, los `*_pct` de 0 a 100,
 { "status": "ok", "recibidas": 12, "guardadas": 10, "duplicadas": 2 }
 ```
 
-Siempre `200`. `duplicadas` son los registros que ya existian con el mismo
-`device_id` + `timestamp`: reenviar un lote es seguro.
+Siempre `200`. `duplicadas` son los registros **identicos** (mismo
+dispositivo, mismo instante y los mismos valores) que ya estaban: reenviar
+un lote es seguro. Dos medidas distintas del mismo segundo se guardan las
+dos, porque las dos son reales.
 
 Un lote con **un solo** registro invalido se rechaza entero (`400`, `403`,
 `413` o `422` segun el caso) y no se guarda nada. Es deliberado: el monitor

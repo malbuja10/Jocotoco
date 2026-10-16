@@ -9,6 +9,7 @@ use Jocotoco\Exception\HttpException;
 use Jocotoco\Security\DeviceIdentity;
 use Jocotoco\Support\Clock;
 use Jocotoco\Support\Logger;
+use Jocotoco\Support\MarcaDeTiempo;
 
 /**
  * Voltaje y estado del dispositivo (seccion 4 del contrato del monitor).
@@ -177,18 +178,20 @@ final class TelemetryService
     /** @param array<string,mixed> $registro */
     private function marcaDeTiempo(array $registro, int $indice): int
     {
-        $valor = $registro['timestamp'] ?? null;
-        if (!is_numeric($valor)) {
-            throw HttpException::badRequest(sprintf('El registro %d no trae un "timestamp" numerico.', $indice));
-        }
+        $marca = MarcaDeTiempo::interpretar(
+            $registro['timestamp'] ?? null,
+            $this->config->string('device_timezone'),
+        );
 
-        $marca = (int) $valor;
-        if ($marca > 100_000_000_000) {
-            $marca = intdiv($marca, 1000);
+        if ($marca === null) {
+            throw HttpException::badRequest(sprintf(
+                'El registro %d no trae un "timestamp" valido (epoch en segundos o ISO 8601).',
+                $indice,
+            ));
         }
 
         $tolerancia = $this->config->int('recorded_at_future_tolerance_seconds');
-        if ($marca < 946_684_800 || $marca > $this->clock->now() + $tolerancia) {
+        if (!MarcaDeTiempo::esPlausible($marca, $this->clock->now(), $tolerancia)) {
             throw HttpException::badRequest(
                 sprintf('El "timestamp" del registro %d no es una fecha plausible (%d).', $indice, $marca),
             );

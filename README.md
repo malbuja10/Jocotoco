@@ -151,6 +151,8 @@ php-fpm) sobre los valores de `config/config.php`:
 | `JOCOTOCO_EVENT_MAX_DURATION_SECONDS` | `300` | Duracion maxima del WAV de un evento |
 | `JOCOTOCO_EVENT_ALLOWED_SAMPLE_RATES` | `8000,…,192000` | Frecuencias aceptadas (vacio = cualquiera) |
 | `JOCOTOCO_EVENT_MAX_CHANNELS` | `2` | Canales maximos del WAV |
+| `JOCOTOCO_EVENT_ALLOW_MISSING_AUDIO` | `true` | Aceptar el evento cuando el equipo ya borro su WAV |
+| `JOCOTOCO_DEVICE_TIMEZONE` | `UTC` | Zona en la que se leen las fechas ISO sin desfase |
 | `JOCOTOCO_TELEMETRY_MAX_RECORDS` | `1000` | Registros por lote de telemetria |
 | `JOCOTOCO_TELEMETRY_MAX_BODY_BYTES` | `1048576` | Cuerpo JSON maximo de telemetria |
 

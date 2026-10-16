@@ -154,12 +154,57 @@ final class EventsApiTest extends ApiTestCase
         self::assertSame(400, $response->status);
     }
 
-    public function testRechazaUnEventoSinAudio(): void
+    public function testAceptaUnEventoCuyoAudioYaNoEstaEnElDispositivo(): void
     {
+        // El monitor envia el evento sin la parte "audio" cuando el WAV ya
+        // se borro de su disco. Si se rechazara, esa fila se quedaria en el
+        // equipo reintentandose en cada sincronizacion.
         $response = $this->app->handle($this->multipart(
             '/api/sincronizar',
             $this->ca->clientPem(self::DISPOSITIVO),
-            ['data' => json_encode(['event_id' => 'evento-sin-audio-01'])],
+            ['data' => json_encode([
+                'event_id' => 'evento-sin-audio-01',
+                'threat_type' => 'chainsaw',
+                'duration_sec' => 3.0,
+                'sample_rate' => 16000,
+                'channels' => 1,
+                'bit_depth' => 16,
+            ])],
+        ));
+
+        $evento = $this->decode($response)['evento'];
+
+        self::assertSame(201, $response->status, $response->body);
+        self::assertNull($evento['audio']['grabacion_id']);
+        self::assertNull($evento['audio']['descarga']);
+        // Sin WAV que leer, se guarda lo que declaro el dispositivo.
+        self::assertSame(3.0, $evento['audio']['duration_sec']);
+        self::assertSame(16000, $evento['audio']['sample_rate']);
+    }
+
+    public function testAceptaElEventoSinAudioAunqueNoVengaComoMultipart(): void
+    {
+        // requests (el cliente del monitor) manda x-www-form-urlencoded en
+        // cuanto no hay archivo que adjuntar.
+        $response = $this->app->handle($this->formulario(
+            '/api/sincronizar',
+            $this->ca->clientPem(self::DISPOSITIVO),
+            ['data' => json_encode(['event_id' => 'evento-urlencoded-1', 'threat_type' => 'gunshot'])],
+        ));
+
+        self::assertSame(201, $response->status, $response->body);
+        self::assertSame('gunshot', $this->decode($response)['evento']['threat_type']);
+    }
+
+    public function testRechazaUnEventoSinAudioSiLaConfiguracionLoExige(): void
+    {
+        $app = $this->createApplication(['event_allow_missing_audio' => false]);
+        $app->prepare();
+
+        $response = $app->handle($this->multipart(
+            '/api/sincronizar',
+            $this->ca->clientPem(self::DISPOSITIVO),
+            ['data' => json_encode(['event_id' => 'evento-sin-audio-02'])],
         ));
 
         self::assertSame(400, $response->status);
@@ -310,6 +355,54 @@ final class EventsApiTest extends ApiTestCase
         $cuerpo = $this->decode($this->enviarEvento(['event_id' => 'evento-sin-marca-1'], conTimestamp: false));
 
         self::assertSame($this->clock->now(), $cuerpo['evento']['timestamp']);
+    }
+
+    public function testAceptaUnTimestampIso8601ConDesfase(): void
+    {
+        // El monitor guarda el instante con datetime.now().isoformat().
+        $marca = $this->clock->now() - 3 * 86400;   // detectado hace tres dias
+
+        $cuerpo = $this->decode($this->enviarEvento([
+            'event_id' => 'evento-iso-desfase',
+            'timestamp' => gmdate('Y-m-d\TH:i:s', $marca) . '+00:00',
+        ]));
+
+        self::assertSame($marca, $cuerpo['evento']['timestamp'], 'Se conserva cuando ocurrio, no cuando llego.');
+        self::assertSame(gmdate('Y-m-d\TH:i:s\Z', $marca), $cuerpo['evento']['ocurrido_en']);
+    }
+
+    public function testInterpretaUnTimestampIsoSinZonaEnLaDelDispositivo(): void
+    {
+        // datetime.now() no escribe el desfase y los equipos corren con
+        // TZ=America/Guayaquil: la hora local se traduce con esa zona.
+        $app = $this->createApplication(['device_timezone' => 'America/Guayaquil']);
+        $app->prepare();
+
+        $marca = $this->clock->now() - 7200;
+        $local = gmdate('Y-m-d\TH:i:s', $marca - 5 * 3600) . '.123456';
+
+        $response = $app->handle($this->multipart(
+            '/api/sincronizar',
+            $this->ca->clientPem(self::DISPOSITIVO),
+            ['data' => json_encode(['event_id' => 'evento-iso-local-1', 'timestamp' => $local])],
+            $this->archivo(AudioFactory::wavPersonalizado(16000, 1, 16, 1.0)),
+        ));
+
+        self::assertSame(201, $response->status, $response->body);
+        self::assertSame($marca, $this->decode($response)['evento']['timestamp']);
+    }
+
+    public function testUnTimestampIlegibleNoHaceperderElEvento(): void
+    {
+        // Peor que fecharlo con la hora de llegada seria rechazarlo: el
+        // valor original queda igualmente en el payload.
+        $response = $this->enviarEvento([
+            'event_id' => 'evento-fecha-rara',
+            'timestamp' => 'el martes por la tarde',
+        ]);
+
+        self::assertSame(201, $response->status, $response->body);
+        self::assertSame($this->clock->now(), $this->decode($response)['evento']['timestamp']);
     }
 
     public function testRechazaUnTimestampImplausible(): void

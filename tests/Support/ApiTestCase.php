@@ -162,6 +162,38 @@ abstract class ApiTestCase extends TestCase
     }
 
     /**
+     * Peticion application/x-www-form-urlencoded: asi envia el monitor el
+     * evento cuando no adjunta audio (su cliente HTTP cambia de tipo solo).
+     *
+     * @param array<string,string> $campos
+     */
+    protected function formulario(string $path, ?string $clientPem, array $campos): Request
+    {
+        $server = [
+            'REQUEST_METHOD' => 'POST',
+            'REQUEST_URI' => $path,
+            'CONTENT_TYPE' => 'application/x-www-form-urlencoded',
+            'REMOTE_ADDR' => '10.0.0.5',
+        ];
+
+        if ($clientPem !== null) {
+            $server['SSL_CLIENT_VERIFY'] = 'SUCCESS';
+            $server['SSL_CLIENT_CERT'] = CertificateFactory::escape($clientPem);
+        }
+
+        return new Request(
+            'POST',
+            rtrim($path, '/'),
+            ['content-type' => 'application/x-www-form-urlencoded'],
+            [],
+            $server,
+            [],
+            null,
+            $campos,
+        );
+    }
+
+    /**
      * Peticion con cuerpo JSON, como la telemetria del monitor.
      *
      * @param array<string,mixed> $cuerpo

@@ -105,7 +105,7 @@ paths:
           multipart/form-data:
             schema:
               type: object
-              required: [data, audio]
+              required: [data]
               properties:
                 data:
                   type: string
@@ -113,10 +113,23 @@ paths:
                 audio:
                   type: string
                   format: binary
-                  description: WAV PCM o IEEE float, `audio/wav`, maximo 64 MiB.
+                  description: >-
+                    WAV PCM o IEEE float, `audio/wav`, maximo 64 MiB. Puede
+                    faltar si el equipo ya borro su copia: el evento se
+                    guarda entonces sin grabacion asociada.
             encoding:
               data: { contentType: text/plain }
               audio: { contentType: audio/wav }
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [data]
+              properties:
+                data:
+                  type: string
+                  description: >-
+                    Solo para el evento sin audio: es el tipo que usa el
+                    cliente del monitor cuando no adjunta archivo.
       responses:
         "201":
           description: Evento nuevo guardado junto con su audio
@@ -408,8 +421,12 @@ components:
           type: string
           description: Ruta local en la Raspberry. Se guarda como referencia; el servidor nunca la lee.
         timestamp:
-          type: integer
-          description: Epoch UTC en segundos (se aceptan milisegundos). Si falta, la hora del servidor.
+          type: [integer, string]
+          description: >-
+            Epoch UTC en segundos (se aceptan milisegundos) o ISO 8601. Una
+            cadena sin desfase se interpreta en la zona del equipo
+            (`device_timezone`). Si falta o no se entiende, la hora del servidor.
+          examples: [1792182425, "2026-10-13T20:34:16-05:00"]
         duration_sec: { type: number }
         sample_rate: { type: integer }
         channels: { type: integer }
@@ -429,7 +446,7 @@ components:
         audio:
           type: object
           properties:
-            grabacion_id: { type: [string, "null"] }
+            grabacion_id: { type: [string, "null"], description: "null si el evento llego sin audio" }
             duration_sec: { type: [number, "null"] }
             sample_rate: { type: [integer, "null"] }
             channels: { type: [integer, "null"] }
@@ -448,7 +465,9 @@ components:
       type: object
       required: [timestamp, value]
       properties:
-        timestamp: { type: integer, description: Epoch UTC en segundos }
+        timestamp:
+          type: [integer, string]
+          description: Epoch UTC en segundos, o ISO 8601
         value: { type: number, minimum: -1000, maximum: 1000, description: Voltios }
         device_id: { type: string }
 
@@ -456,7 +475,9 @@ components:
       type: object
       required: [timestamp]
       properties:
-        timestamp: { type: integer, description: Epoch UTC en segundos }
+        timestamp:
+          type: [integer, string]
+          description: Epoch UTC en segundos, o ISO 8601
         cpu_temp: { type: number, minimum: -50, maximum: 150, description: Grados Celsius }
         cpu_usage_pct: { type: number, minimum: 0, maximum: 100 }
         ram_usage_pct: { type: number, minimum: 0, maximum: 100 }
@@ -471,4 +492,4 @@ components:
         status: { type: string, const: ok }
         recibidas: { type: integer }
         guardadas: { type: integer }
-        duplicadas: { type: integer, description: Ya existian con ese `device_id` + `timestamp` }
+        duplicadas: { type: integer, description: Registros identicos que ya estaban (mismo dispositivo, instante y valores) }

@@ -108,7 +108,7 @@ Nunca se devuelve `202` ni `204` como acuse de exito.
 
 | Campo | Unidad acordada |
 |-------|-----------------|
-| `timestamp` (evento y telemetria) | epoch Unix en **segundos**, UTC. Se aceptan milisegundos y se convierten; se rechaza lo anterior al ano 2000 o mas de 5 minutos en el futuro |
+| `timestamp` (evento y telemetria) | epoch Unix en **segundos**, UTC. Se aceptan tambien milisegundos y cadenas ISO 8601. Una ISO con desfase manda; una sin desfase (la que genera `datetime.now()`) se interpreta en la zona del equipo, configurada en el servidor como `device_timezone` = `America/Guayaquil`. Se rechaza lo anterior al ano 2000 o mas de 5 minutos en el futuro |
 | `cpu_temp` | **grados Celsius**; se acepta de -50 a 150 |
 | `cpu_usage_pct`, `ram_usage_pct`, `disk_usage_pct` | porcentaje 0–100 |
 | `disk_free_gb` | GB |
@@ -133,10 +133,18 @@ detectar un equipo con el reloj corrido sin perder el dato.
   usar el mismo `event_id` sin estorbarse.
 - **Audio:** ademas se deduplica por sha256 dentro del dispositivo; dos
   eventos con el mismo WAV comparten un unico archivo.
-- **Telemetria:** clave `device_id` + `timestamp` por tipo de metrica (tablas
-  separadas para voltaje y estado), tambien con indice unico. La respuesta
-  dice cuantos registros se guardaron y cuantos ya existian; en ambos casos
-  es `200` y el monitor puede borrarlos.
+- **Telemetria:** clave `device_id` + `timestamp` + **los valores**, por tipo
+  de metrica (tablas separadas para voltaje y estado). Se incluyen los
+  valores a proposito: el monitor sella cada medida con
+  `int(time.time())` y dos lecturas seguidas pueden caer en el mismo
+  segundo; con la clave sin valores la segunda se habria descartado como
+  si fuera un reenvio. Un reenvio real trae los mismos numeros y se sigue
+  ignorando. La respuesta dice cuantos se guardaron y cuantos ya estaban;
+  en ambos casos es `200` y el monitor puede borrarlos.
+- **Eventos sin audio:** si el WAV ya no esta en el equipo, el evento se
+  acepta igual (`201`, sin grabacion asociada). Rechazarlo dejaria esa fila
+  atascada en la base local del monitor, reintentandose en cada
+  sincronizacion y ocupando sitio en el lote de 30 que sube por vez.
 - Un lote de telemetria con un registro invalido se rechaza **entero**: como
   el monitor borra lo que sincroniza al recibir `200`, un exito parcial le
   haria perder los registros descartados.
@@ -169,7 +177,30 @@ Limites vigentes: hasta 5 tokens por dispositivo y hora (`429` al pasarse),
 provisionarse al llegar a campo y no durante el viaje. El alta esta deshabilitada por defecto
 (`JOCOTOCO_ENROLLMENT_ENABLED=true` la activa).
 
-## 9. Lo que el servidor no espera recibir
+## 9. Comprobado contra el cliente real
+
+Las cuatro rutas se ejercitaron ejecutando el codigo del repositorio del
+monitor (`monitor/network.py` y `monitor/database.py`) sin modificarlo:
+solo se le cambio la configuracion para apuntarlo a un API de prueba. Se
+verifico que el equipo borra sus filas locales (es decir, que recibio
+`200`/`201`), que el audio llega intacto y que la fecha de deteccion se
+conserva aunque el envio ocurra dias despues.
+
+Tres cosas del lado del monitor que conviene revisar, aunque el servidor ya
+las tolera:
+
+1. `timestamp` viaja como `datetime.now().isoformat()`, sin desfase horario.
+   El servidor lo interpreta en `America/Guayaquil`; si algun equipo
+   cambiara de zona, bastaria usar `datetime.now().astimezone().isoformat()`
+   —o `int(time.time())`— y el desfase viajaria explicito.
+2. En `sync_worker_loop`, `REPORTING_TIMES` son cadenas (`'12:48'`) y se
+   comparan contra `datetime.now().hour`, que es un entero: esa condicion
+   nunca se cumple y los reportes programados no se disparan. La
+   sincronizacion por cola (cuando hay deteccion) si funciona.
+3. El secreto de fabrica esta escrito en el codigo del repositorio. Conviene
+   rotarlo y leerlo de una variable de entorno o de un archivo del equipo.
+
+## 10. Lo que el servidor no espera recibir
 
 Se da por bueno el punto 6 del contrato: el API no exige identificador ni
 version del modelo, conjunto de clases, bounding box, espectrograma,
@@ -177,7 +208,7 @@ latencia, piso de ruido ni motivo de activacion de antena. Si algun dia el
 monitor los envia dentro de `data`, se guardan tal cual en el `payload`
 original del evento sin necesidad de cambiar el servidor.
 
-## 10. Especificacion formal
+## 11. Especificacion formal
 
 [`openapi.yaml`](openapi.yaml) describe las rutas, los esquemas y los codigos
 de error. Se puede abrir en Swagger UI o importar en Postman.
