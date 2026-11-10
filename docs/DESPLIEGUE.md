@@ -310,6 +310,10 @@ php /srv/jocotoco/bin/jocotoco inspeccionar-cert /etc/jocotoco/tls/dispositivo.c
 sudo -u jocotoco php /srv/jocotoco/bin/jocotoco listar
 sudo -u jocotoco php /srv/jocotoco/bin/jocotoco listar rpi-yanacocha-01
 
+# Eventos de deteccion y telemetria
+sudo -u jocotoco php /srv/jocotoco/bin/jocotoco eventos
+sudo -u jocotoco php /srv/jocotoco/bin/jocotoco telemetria rpi-yanacocha-01
+
 # Configuracion efectiva (utilisimo cuando algo no toma efecto)
 sudo -u jocotoco php /srv/jocotoco/bin/jocotoco config
 
@@ -319,6 +323,39 @@ sudo tail -f /var/log/jocotoco/api.log | jq -c '[.ts,.nivel,.mensaje,.contexto]'
 # Purga manual (el timer diario ejecuta "purgar 365")
 sudo -u jocotoco php /srv/jocotoco/bin/jocotoco purgar 90
 ```
+
+### Consultar la base a mano
+
+La base vive en `/var/lib/jocotoco/jocotoco.sqlite` (modo WAL, de ahi los
+archivos `-wal` y `-shm`). No hace falta instalar `sqlite3`: el CLI trae un
+intérprete de consultas que abre la base **en solo lectura** y rechaza todo
+lo que no sea `SELECT`, `WITH`, `PRAGMA` o `EXPLAIN`.
+
+```bash
+cd /srv/jocotoco
+php bin/jocotoco consultar tablas                  # tablas y numero de filas
+php bin/jocotoco consultar esquema detection_events
+php bin/jocotoco consultar "SELECT device_id, COUNT(*) AS eventos,
+    MAX(received_at) AS ultimo FROM detection_events GROUP BY device_id"
+```
+
+Las columnas `measured_at` y `event_timestamp` son epoch en segundos:
+`datetime(columna,'unixepoch')` las muestra en UTC y
+`datetime(columna,'unixepoch','-5 hours')` en hora de Ecuador. Las `*_at`
+ya son texto ISO 8601 en UTC.
+
+Si prefiere el cliente `sqlite3`, instalelo desde una cuenta con sudo y
+abralo **como el usuario del servicio y en solo lectura**:
+
+```bash
+sudo apt-get install -y sqlite3
+sudo -u jocotoco sqlite3 -readonly -box /var/lib/jocotoco/jocotoco.sqlite ".tables"
+```
+
+Abrirla como root en modo escritura deja los archivos `-wal` y `-shm` con
+dueno root y el API (que corre como `jocotoco`) empieza a fallar con
+*attempt to write a readonly database*. Si pasa:
+`sudo chown jocotoco:jocotoco /var/lib/jocotoco/jocotoco.sqlite*`.
 
 ### Respaldos
 

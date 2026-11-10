@@ -15,6 +15,9 @@ declare(strict_types=1);
  *                                   Ultimas grabaciones registradas
  *   bin/jocotoco purgar <dias>      Elimina grabaciones, eventos y telemetria
  *                                   mas antiguos que N dias
+ *   bin/jocotoco consultar <SQL>    Consulta la base en solo lectura
+ *   bin/jocotoco eventos [disp]     Ultimos eventos de deteccion
+ *   bin/jocotoco telemetria [disp]  Ultimo voltaje y estado de los equipos
  *   bin/jocotoco inscripciones      Estado del alta automatica por dispositivo
  *   bin/jocotoco bloquear-inscripcion <dispositivo> [motivo]
  *                                   Impide que ese dispositivo vuelva a
@@ -35,6 +38,85 @@ $app = Application::create();
 
 $salida = static function (string $texto): void {
     fwrite(STDOUT, $texto . PHP_EOL);
+};
+
+/**
+ * Imprime filas como tabla alineada. Sin dependencias: la salida se lee en
+ * una sesion ssh, que es donde se usa esto.
+ *
+ * @param list<array<string,mixed>> $filas
+ */
+$tabla = static function (array $filas) use ($salida): void {
+    if ($filas === []) {
+        $salida('(sin resultados)');
+
+        return;
+    }
+
+    $columnas = array_keys($filas[0]);
+    $ancho = [];
+    foreach ($columnas as $columna) {
+        $ancho[$columna] = mb_strlen((string) $columna);
+    }
+
+    $texto = static fn (mixed $valor): string => match (true) {
+        $valor === null => 'NULL',
+        is_bool($valor) => $valor ? 'true' : 'false',
+        default => (string) $valor,
+    };
+
+    foreach ($filas as $fila) {
+        foreach ($columnas as $columna) {
+            $ancho[$columna] = max($ancho[$columna], mb_strlen($texto($fila[$columna] ?? null)));
+        }
+    }
+
+    $linea = static function (array $valores) use ($columnas, $ancho, $texto): string {
+        $partes = [];
+        foreach ($columnas as $columna) {
+            $celda = $texto($valores[$columna] ?? null);
+            $partes[] = $celda . str_repeat(' ', $ancho[$columna] - mb_strlen($celda));
+        }
+
+        return implode('  ', $partes);
+    };
+
+    $salida($linea(array_combine($columnas, $columnas)));
+    $salida(implode('  ', array_map(static fn ($c): string => str_repeat('-', $ancho[$c]), $columnas)));
+    foreach ($filas as $fila) {
+        $salida($linea($fila));
+    }
+    $salida(sprintf('(%d fila%s)', count($filas), count($filas) === 1 ? '' : 's'));
+};
+
+/**
+ * Conexion de solo lectura, para que una consulta a mano no pueda tocar
+ * los datos del API ni bloquear sus escrituras. Si la base esta en WAL y
+ * falta el archivo -shm (el API detenido y con checkpoint hecho), SQLite no
+ * puede abrirla asi: entonces se usa la conexion normal, que para eso la
+ * consulta ya viene comprobada como de lectura.
+ */
+$soloLectura = static function () use ($app): PDO {
+    $ruta = $app->config()->string('db_path');
+
+    try {
+        return new PDO('sqlite:file:' . $ruta . '?mode=ro', null, null, [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        ]);
+    } catch (Throwable) {
+        return $app->database()->connection();
+    }
+};
+
+/** Solo consultas: ni una escritura por descuido desde la linea de comandos. */
+$esLectura = static function (string $sql): bool {
+    $limpio = ltrim($sql);
+    if (!preg_match('/^(select|with|pragma|explain)\b/i', $limpio)) {
+        return false;
+    }
+
+    // Un ";" solo se tolera al final: nada de encadenar un DELETE detras.
+    return preg_match('/;\s*\S/', $limpio) !== 1;
 };
 
 switch ($command) {
@@ -117,6 +199,119 @@ switch ($command) {
         }
         break;
 
+    case 'consultar':
+        $argumento = trim((string) ($argv[2] ?? ''));
+
+        if ($argumento === '' || $argumento === 'ayuda') {
+            fwrite(STDERR, <<<USO
+            Uso: bin/jocotoco consultar "<SELECT ...>"
+                 bin/jocotoco consultar tablas
+                 bin/jocotoco consultar esquema <tabla>
+
+            Solo acepta SELECT, WITH, PRAGMA y EXPLAIN, sobre una conexion
+            de solo lectura. Las marcas de tiempo epoch se leen con
+            datetime(columna,'unixepoch') (UTC) o ...,'-5 hours' (Ecuador).
+            USO . PHP_EOL);
+            exit(1);
+        }
+
+        $pdo = $soloLectura();
+
+        if ($argumento === 'tablas') {
+            $filas = [];
+            $nombres = $pdo->query(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+            )->fetchAll(PDO::FETCH_COLUMN);
+
+            foreach ($nombres as $nombre) {
+                $filas[] = [
+                    'tabla' => $nombre,
+                    'filas' => (int) $pdo->query(sprintf('SELECT COUNT(*) FROM "%s"', $nombre))->fetchColumn(),
+                ];
+            }
+
+            $tabla($filas);
+            break;
+        }
+
+        if ($argumento === 'esquema') {
+            $nombre = $argv[3] ?? '';
+            $statement = $pdo->prepare(
+                "SELECT sql FROM sqlite_master WHERE tbl_name = :t AND sql IS NOT NULL ORDER BY type DESC",
+            );
+            $statement->execute([':t' => $nombre]);
+            $definiciones = $statement->fetchAll(PDO::FETCH_COLUMN);
+
+            if ($definiciones === []) {
+                fwrite(STDERR, sprintf('No existe la tabla %s.' . PHP_EOL, $nombre));
+                exit(1);
+            }
+
+            foreach ($definiciones as $definicion) {
+                $salida($definicion . ';');
+            }
+            break;
+        }
+
+        if (!$esLectura($argumento)) {
+            fwrite(STDERR, 'Solo se permiten consultas de lectura (SELECT, WITH, PRAGMA, EXPLAIN).' . PHP_EOL);
+            exit(1);
+        }
+
+        try {
+            $resultado = $pdo->query($argumento);
+            $tabla($resultado === false ? [] : $resultado->fetchAll(PDO::FETCH_ASSOC));
+        } catch (PDOException $exception) {
+            fwrite(STDERR, 'La consulta fallo: ' . $exception->getMessage() . PHP_EOL);
+            exit(1);
+        }
+        break;
+
+    case 'eventos':
+        $dispositivo = $argv[2] ?? '';
+        $sql = "SELECT substr(id, 1, 8) AS id, device_id AS dispositivo, event_id,
+                       threat_type AS clase, round(confidence_score, 2) AS puntaje,
+                       datetime(event_timestamp, 'unixepoch') AS ocurrido_utc,
+                       duration_sec AS seg,
+                       CASE WHEN recording_id IS NULL THEN 'no' ELSE 'si' END AS audio,
+                       received_at AS recibido
+                FROM detection_events"
+            . ($dispositivo === '' ? '' : ' WHERE device_id = :d')
+            . ' ORDER BY received_at DESC LIMIT 25';
+
+        $statement = $soloLectura()->prepare($sql);
+        $statement->execute($dispositivo === '' ? [] : [':d' => $dispositivo]);
+        $tabla($statement->fetchAll(PDO::FETCH_ASSOC));
+        break;
+
+    case 'telemetria':
+        $dispositivo = $argv[2] ?? '';
+        $pdo = $soloLectura();
+        $donde = $dispositivo === '' ? '' : ' WHERE device_id = :d';
+        $parametros = $dispositivo === '' ? [] : [':d' => $dispositivo];
+
+        $voltaje = $pdo->prepare(
+            "SELECT device_id AS dispositivo, datetime(measured_at, 'unixepoch') AS medido_utc,
+                    value AS voltios, received_at AS recibido
+             FROM voltage_readings" . $donde . ' ORDER BY measured_at DESC LIMIT 15',
+        );
+        $voltaje->execute($parametros);
+
+        $estado = $pdo->prepare(
+            "SELECT device_id AS dispositivo, datetime(measured_at, 'unixepoch') AS medido_utc,
+                    cpu_temp AS cpu_c, cpu_usage_pct AS cpu_pct, ram_usage_pct AS ram_pct,
+                    disk_free_gb AS disco_gb, disk_usage_pct AS disco_pct, uptime_hours AS horas
+             FROM device_telemetry" . $donde . ' ORDER BY measured_at DESC LIMIT 15',
+        );
+        $estado->execute($parametros);
+
+        $salida('Voltaje');
+        $tabla($voltaje->fetchAll(PDO::FETCH_ASSOC));
+        $salida('');
+        $salida('Estado del equipo');
+        $tabla($estado->fetchAll(PDO::FETCH_ASSOC));
+        break;
+
     case 'inscripciones':
         $inscripciones = (new EnrollmentRepository($app->database()))->listAll();
         if ($inscripciones === []) {
@@ -172,6 +367,11 @@ switch ($command) {
           config                           Muestra la configuracion efectiva
           inspeccionar-cert <archivo.crt>  Interpreta un certificado de step-ca
           listar [dispositivo]             Ultimas grabaciones
+          eventos [dispositivo]            Ultimos eventos de deteccion
+          telemetria [dispositivo]         Ultimo voltaje y estado
+          consultar <SQL>                  Consulta la base en solo lectura
+                                           (tambien: consultar tablas |
+                                            consultar esquema <tabla>)
           purgar <dias>                    Borra grabaciones, eventos y telemetria antiguos
           inscripciones                    Estado del alta automatica
           bloquear-inscripcion <disp>      Impide que se vuelva a inscribir
