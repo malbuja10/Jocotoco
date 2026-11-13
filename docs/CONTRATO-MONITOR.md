@@ -132,7 +132,9 @@ detectar un equipo con el reloj corrido sin perder el dato.
   que ya estaba, con su mismo identificador interno. Dos dispositivos pueden
   usar el mismo `event_id` sin estorbarse.
 - **Audio:** ademas se deduplica por sha256 dentro del dispositivo; dos
-  eventos con el mismo WAV comparten un unico archivo.
+  eventos con el mismo WAV comparten un unico archivo. Se guarda con el
+  nombre que envio el equipo (saneado) y el ULID de la grabacion detras,
+  asi que la clase de la deteccion se lee en el propio nombre del archivo.
 - **Telemetria:** clave `device_id` + `timestamp` + **los valores**, por tipo
   de metrica (tablas separadas para voltaje y estado). Se incluyen los
   valores a proposito: el monitor sella cada medida con

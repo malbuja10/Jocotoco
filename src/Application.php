@@ -88,7 +88,11 @@ final class Application
         $logger = new Logger($config->string('log_path'), $clock);
 
         $database = new Database($config->string('db_path'), $root . '/database/migrations');
-        $storage = new AudioStorage($config->string('audio_dir'), $clock);
+        $storage = new AudioStorage(
+            $config->string('audio_dir'),
+            $clock,
+            keepOriginalFilename: $config->bool('audio_keep_original_filename'),
+        );
         $repository = new RecordingRepository($database);
         $validator = new AudioValidator($config, new AudioSniffer());
         $reader = new PayloadReader($config->string('tmp_dir'), $config->int('max_upload_bytes'));

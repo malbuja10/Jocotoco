@@ -89,7 +89,7 @@ final class RecordingService
         $id = Ulid::generate($this->clock);
 
         try {
-            $relativePath = $this->storage->store($temporaryPath, $device->id, $id, $format);
+            $relativePath = $this->storage->store($temporaryPath, $device->id, $id, $format, $originalFilename);
         } catch (StorageException $exception) {
             $this->logger->error('Fallo el almacenamiento del audio', [
                 'dispositivo' => $device->id,

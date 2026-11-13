@@ -458,6 +458,26 @@ final class EventsApiTest extends ApiTestCase
         self::assertNotNull($detalle['evento']['audio']['grabacion_id'], 'El audio se guarda bajo su propio id.');
     }
 
+    public function testGuardaElAudioConElNombreQueEnvioElEquipo(): void
+    {
+        // El monitor nombra sus archivos AMENAZA_<etiqueta>_<fecha>_<hora>.wav,
+        // asi que el nombre en disco deja ver la clase sin consultar la base.
+        $response = $this->app->handle($this->multipart(
+            '/api/sincronizar',
+            $this->ca->clientPem(self::DISPOSITIVO),
+            ['data' => json_encode(['event_id' => 'evento-con-nombre-1', 'threat_type' => 'chainsaw'])],
+            $this->archivo(AudioFactory::wavPersonalizado(16000, 1, 16, 1.0), 'AMENAZA_chainsaw_20261109_181442.wav'),
+        ));
+
+        $grabacion = $this->decode($response)['evento']['audio']['grabacion_id'];
+        $ruta = (string) $this->app->repository()->find($grabacion)?->relativePath;
+
+        self::assertSame(201, $response->status, $response->body);
+        self::assertStringContainsString('AMENAZA_chainsaw_20261109_181442-', $ruta);
+        self::assertStringEndsWith('.wav', $ruta);
+        self::assertFileExists($this->app->storage()->absolutePath($ruta));
+    }
+
     public function testCadaDispositivoSoloVeSusEventos(): void
     {
         $este = $this->decode($this->enviarEvento(['event_id' => 'evento-propio-0001']));
@@ -539,12 +559,16 @@ final class EventsApiTest extends ApiTestCase
         ));
     }
 
-    /** Escribe el audio en un archivo nuevo, como hace el servidor web con la parte subida. */
+    /**
+     * Escribe el audio en un archivo nuevo, como hace el servidor web con la
+     * parte subida. El azar va en el directorio para que el nombre del
+     * archivo sea exactamente el que pide la prueba.
+     */
     private function archivo(string $contenido, string $nombre = 'evento.wav'): string
     {
         return AudioFactory::writeTo(
-            $this->tmp->child('subidas'),
-            bin2hex(random_bytes(4)) . '-' . $nombre,
+            $this->tmp->child('subidas/' . bin2hex(random_bytes(4))),
+            $nombre,
             $contenido,
         );
     }

@@ -324,6 +324,34 @@ sudo tail -f /var/log/jocotoco/api.log | jq -c '[.ts,.nivel,.mensaje,.contexto]'
 sudo -u jocotoco php /srv/jocotoco/bin/jocotoco purgar 90
 ```
 
+### Como quedan los audios en disco
+
+```
+/var/lib/jocotoco/audio/<dispositivo>/<aaaa>/<mm>/<dd>/<nombre-del-equipo>-<ULID>.<ext>
+```
+
+Por ejemplo:
+
+```
+/var/lib/jocotoco/audio/1a23dc9839f031f6/2026/11/09/AMENAZA_chainsaw_20261109_181442-01M5...wav
+```
+
+El nombre es el que envio el equipo, saneado (sin directorios, sin `..`,
+solo ASCII, hasta 64 caracteres), y el ULID de la grabacion va detras para
+que dos envios no se pisen: el analizador reutiliza nombres —solo conserva
+los diez ultimos archivos— y dos equipos pueden coincidir. La extension
+sale del formato detectado por bytes magicos, no de la que traiga el
+nombre. Con `JOCOTOCO_AUDIO_KEEP_ORIGINAL_FILENAME=false` se vuelve al
+nombre anterior, solo el ULID.
+
+```bash
+# Que amenazas llegaron hoy, sin consultar la base
+sudo ls -lt /var/lib/jocotoco/audio/*/2026/11/09/ | head
+
+# Solo las motosierras
+sudo find /var/lib/jocotoco/audio -name 'AMENAZA_chainsaw_*' -printf '%TF %TR  %p\n' | sort | tail
+```
+
 ### Consultar la base a mano
 
 La base vive en `/var/lib/jocotoco/jocotoco.sqlite` (modo WAL, de ahi los

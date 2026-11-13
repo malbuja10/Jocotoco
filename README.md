@@ -142,6 +142,7 @@ php-fpm) sobre los valores de `config/config.php`:
 | `JOCOTOCO_MAX_UPLOAD_BYTES` | `67108864` | Tamano maximo de grabacion |
 | `JOCOTOCO_ALLOWED_FORMATS` | `wav,flac,ogg,opus,mp3` | Formatos aceptados |
 | `JOCOTOCO_ALLOW_DELETE` | `false` | Habilitar `DELETE` |
+| `JOCOTOCO_AUDIO_KEEP_ORIGINAL_FILENAME` | `true` | Guardar el audio como `<nombre-del-equipo>-<ULID>.<ext>` |
 | `JOCOTOCO_LOG_PATH` | `<data_dir>/logs/api.log` | Log JSON por linea (`stderr` para journald) |
 | `JOCOTOCO_ENROLLMENT_ENABLED` | `false` | Habilita `POST /v1/inscripcion` |
 | `JOCOTOCO_ENROLLMENT_SECRET` | vacio | Secreto de fabrica (16 caracteres o mas) |

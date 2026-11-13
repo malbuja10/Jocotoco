@@ -279,6 +279,14 @@ Respuesta `201` (evento nuevo) o `200` (reenvio del mismo
 }
 ```
 
+El archivo queda en disco como
+`<raiz>/<dispositivo>/<aaaa>/<mm>/<dd>/<nombre-del-equipo>-<ULID>.<ext>`, de
+modo que la clase de la deteccion se lee con un `ls` (el monitor los llama
+`AMENAZA_<etiqueta>_<fecha>_<hora>.wav`). El nombre se sanea —sin
+directorios, sin `..`, solo ASCII y hasta 64 caracteres— y el ULID va
+siempre detras, porque el equipo reutiliza nombres. Con
+`JOCOTOCO_AUDIO_KEEP_ORIGINAL_FILENAME=false` se guarda solo el ULID.
+
 Los valores de `audio` salen de la cabecera del WAV, no del JSON: si el
 monitor declara otra cosa, el evento se acepta igual y la diferencia queda
 anotada en el log del servidor.

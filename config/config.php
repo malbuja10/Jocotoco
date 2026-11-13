@@ -44,6 +44,10 @@ return [
     'db_path' => '',
     'tmp_dir' => '',
     'allow_delete' => false,
+    // El archivo se guarda como <nombre-del-equipo>-<ULID>.<ext>, para que
+    // la clase de la deteccion se lea en un "ls". En false se guarda solo
+    // el ULID. El ULID va siempre: el equipo reutiliza nombres.
+    'audio_keep_original_filename' => true,
 
     // --- Limites de audio -----------------------------------------------
     // 64 MiB: ~ 6 min de WAV 48 kHz 16 bit mono.
