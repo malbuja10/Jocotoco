@@ -53,6 +53,7 @@ como ya hace el codigo del monitor.
 |-------|----------|
 | CA que emite los certificados de cliente | `Jocotoco Intermediate CA`, provisioner JWK `dispositivos` |
 | Vigencia del certificado del dispositivo | 90 dias por defecto, hasta 270; renovable antes de vencer y tambien despues (`allowRenewalAfterExpiry`), pensado para equipos que pasan meses sin Internet |
+| Renovacion | automatica **cada 30 dias**: el temporizador del equipo comprueba cada 4 h y cambia el certificado cuando le quedan 60 dias. Las comprobaciones frecuentes son las que dejan ponerse al dia a un equipo que estuvo sin enlace |
 | Identidad | primer SAN DNS del certificado; si no hay, el CN |
 | Asociacion certificado ↔ `device_id` | el `device_id` del payload debe ser igual a esa identidad; si no, `403`. Si el payload no lo trae, se usa la del certificado |
 | Validacion de expiracion | la hace Apache en el handshake y la repite el API (tolerancia de reloj: 60 s) |

@@ -216,7 +216,9 @@ Conseguir la identidad es la mitad; hay que mantenerla y usarla:
    temporizador de `deploy/raspberry/systemd/` o replique su efecto:
 
    ```bash
-   step ca renew --force --expires-in 8h <crt> <key>
+   # El umbral sale de "vigencia menos 30 dias": con 90 dias de vigencia,
+   # 1440h hace que el certificado se cambie una vez al mes.
+   step ca renew --force --expires-in 1440h <crt> <key>
    ```
 
    Para equipos que pasan semanas sin conexion, amplie la vigencia en el

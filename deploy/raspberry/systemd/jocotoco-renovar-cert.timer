@@ -1,5 +1,5 @@
 [Unit]
-Description=Renovacion periodica del certificado de dispositivo
+Description=Comprueba cada 4 h el certificado del dispositivo (lo renueva cada 30 dias)
 
 [Timer]
 OnBootSec=2min

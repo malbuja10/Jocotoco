@@ -30,6 +30,11 @@ DIR="/etc/jocotoco"
 # que pasan semanas sin conexion, ampliela en el servidor con
 # 07-vigencia-dispositivos.sh en lugar de forzarla aqui.
 VIGENCIA=""
+# Cada cuantos dias se renueva el certificado. No es la frecuencia con que
+# corre el temporizador (eso es cada 4 h), sino la edad a la que el
+# certificado se cambia: el umbral que se le pasa a "step ca renew" es
+# "vigencia - estos dias".
+RENOVAR_CADA_DIAS=30
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -38,6 +43,7 @@ while [[ $# -gt 0 ]]; do
         --huella) HUELLA="$2"; shift 2 ;;
         --token) TOKEN="$2"; shift 2 ;;
         --api-url) API_URL="$2"; shift 2 ;;
+        --renovar-cada) RENOVAR_CADA_DIAS="$2"; shift 2 ;;
         --vigencia) VIGENCIA="$2"; shift 2 ;;
         *) echo "Parametro desconocido: $1" >&2; exit 1 ;;
     esac
@@ -47,6 +53,8 @@ done
 for requerido in NOMBRE CA_URL HUELLA TOKEN; do
     [[ -n "${!requerido}" ]] || { echo "Falta --${requerido,,}" >&2; exit 1; }
 done
+[[ "$RENOVAR_CADA_DIAS" =~ ^[0-9]+$ ]] && (( RENOVAR_CADA_DIAS >= 1 )) \
+    || { echo "--renovar-cada debe ser un entero de dias >= 1." >&2; exit 1; }
 
 echo "==> Verificando el reloj del sistema"
 if ! timedatectl show --property=NTPSynchronized --value | grep -q '^yes$'; then
@@ -128,14 +136,34 @@ chmod 0644 "$DIR/tls/dispositivo.crt"
 chmod 0600 "$DIR/tls/dispositivo.key"
 install -m 0644 "$STEPPATH/certs/root_ca.crt" "$DIR/tls/raiz-ca.crt"
 
-# La renovacion se intenta cuando al certificado le queda menos de un tercio
-# de su vida. Con 30 dias de vigencia son 10 dias de margen: cualquier
-# ventana de conexion en ese periodo alcanza para renovar.
+# Cada cuanto se cambia el certificado. "step ca renew" no renueva por
+# calendario sino por lo que le quede de vida, asi que para que el cambio
+# ocurra cada N dias el umbral tiene que ser "vigencia - N dias": con 90
+# dias de vigencia y N=30, se renueva cuando le quedan 60, o sea al mes.
+#
+# El temporizador sigue corriendo cada 4 h a proposito: esos intentos no
+# renuevan nada mientras no toque, y son los que permiten que un equipo que
+# estuvo semanas sin enlace se ponga al dia en su primera ventana de
+# conexion.
 vigencia_segundos=$(( $(date -d "$(openssl x509 -in "$DIR/tls/dispositivo.crt" -noout -enddate | cut -d= -f2)" +%s) \
                     - $(date -d "$(openssl x509 -in "$DIR/tls/dispositivo.crt" -noout -startdate | cut -d= -f2)" +%s) ))
-renovar_antes_horas=$(( vigencia_segundos / 3600 / 3 ))
-(( renovar_antes_horas < 8 )) && renovar_antes_horas=8
-echo "==> Certificado de $(( vigencia_segundos / 86400 )) dias; se renovara cuando queden ${renovar_antes_horas} h"
+vigencia_dias=$(( vigencia_segundos / 86400 ))
+renovar_antes_horas=$(( (vigencia_segundos - RENOVAR_CADA_DIAS * 86400) / 3600 ))
+
+if (( renovar_antes_horas < 8 )); then
+    # El certificado no vive lo suficiente para cambiarlo cada N dias (por
+    # ejemplo, los 24 h de una CA recien instalada): se vuelve al tercio de
+    # la vida, que es lo seguro.
+    renovar_antes_horas=$(( vigencia_segundos / 3600 / 3 ))
+    (( renovar_antes_horas < 8 )) && renovar_antes_horas=8
+    echo "AVISO: la vigencia es de ${vigencia_dias} dias, menor que los ${RENOVAR_CADA_DIAS} dias" >&2
+    echo "       pedidos entre renovaciones. Se renovara cuando le queden" >&2
+    echo "       ${renovar_antes_horas} h. Para ampliarla, en el servidor:" >&2
+    echo "         sudo ./07-vigencia-dispositivos.sh --dias 90" >&2
+else
+    echo "==> Certificado de ${vigencia_dias} dias; se renovara cada ${RENOVAR_CADA_DIAS} dias"
+    echo "    (umbral: cuando le queden ${renovar_antes_horas} h; el temporizador comprueba cada 4 h)"
+fi
 
 echo "==> Guardando la configuracion del cliente"
 cat > "$DIR/dispositivo.env" <<ENV
@@ -148,7 +176,9 @@ JOCOTOCO_CA=${DIR}/tls/raiz-ca.crt
 JOCOTOCO_COLA=/var/lib/jocotoco/cola
 JOCOTOCO_ENVIADAS=/var/lib/jocotoco/enviadas
 STEPPATH=${STEPPATH}
-# Umbral de renovacion del certificado (lo usa jocotoco-renovar-cert.service)
+# Umbral de renovacion (lo usa jocotoco-renovar-cert.service): el
+# certificado se cambia cuando le queda menos de esto, lo que equivale a
+# renovarlo cada ${RENOVAR_CADA_DIAS} dias.
 JOCOTOCO_RENOVAR_ANTES=${renovar_antes_horas}h
 ENV
 chmod 0644 "$DIR/dispositivo.env"

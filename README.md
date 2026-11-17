@@ -13,7 +13,7 @@ contrasenas, la identidad es el certificado y la renueva `step-cli` sola.
  │ cola en disco      │  mTLS  ─────► │ php8.3-fpm  →  public/index.php    │
  │   ↓                │               │   ↓                                │
  │ curl --cert --key  │               │ /var/lib/jocotoco/audio/<disp>/... │
- │ step ca renew (4h) │               │ SQLite (metadatos)                 │
+ │ step ca renew (30d)│               │ SQLite (metadatos)                 │
  └────────────────────┘               └────────────────────────────────────┘
           ▲                                          ▲
           └────────── step-ca (CA interna) ──────────┘

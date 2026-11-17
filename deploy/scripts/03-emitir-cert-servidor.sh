@@ -9,6 +9,9 @@
 #          --ca-url https://ca.jocotoco.local:8443 \
 #          --huella <HUELLA_DE_LA_RAIZ>
 #
+# Opciones: --vigencia 2160h       (lo que se le pide a la CA)
+#           --renovar-cada 30      (cada cuantos dias se renueva)
+#
 # Si step-ca corre en esta misma maquina puede omitir --ca-url/--huella:
 # se toman de /etc/step.
 # ---------------------------------------------------------------------------
@@ -19,7 +22,14 @@ CA_URL=""
 HUELLA=""
 DESTINO_TLS="/etc/jocotoco/tls"
 RAIZ_CA="/etc/step/certs/root_ca.crt"
-VIGENCIA="24h"
+# 90 dias, igual que los certificados de dispositivo. La CA recorta este
+# valor a su maximo si es menor (una CA recien instalada por un 01 antiguo
+# emite 24 h): lo que se use de verdad se lee despues del certificado.
+VIGENCIA="2160h"
+# Cada cuantos dias se cambia el certificado. El temporizador comprueba
+# cada 8 h; el cambio ocurre cuando al certificado le queda menos de
+# "vigencia - estos dias".
+RENOVAR_CADA_DIAS=30
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -27,11 +37,14 @@ while [[ $# -gt 0 ]]; do
         --ca-url) CA_URL="$2"; shift 2 ;;
         --huella) HUELLA="$2"; shift 2 ;;
         --vigencia) VIGENCIA="$2"; shift 2 ;;
+        --renovar-cada) RENOVAR_CADA_DIAS="$2"; shift 2 ;;
         *) echo "Parametro desconocido: $1" >&2; exit 1 ;;
     esac
 done
 
 [[ $EUID -eq 0 ]] || { echo "Ejecute este script con sudo." >&2; exit 1; }
+[[ "$RENOVAR_CADA_DIAS" =~ ^[0-9]+$ ]] && (( RENOVAR_CADA_DIAS >= 1 )) \
+    || { echo "--renovar-cada debe ser un entero de dias >= 1." >&2; exit 1; }
 command -v step >/dev/null 2>&1 || { echo "Falta step-cli. Ejecute 01-instalar-step-ca.sh o instale step-cli." >&2; exit 1; }
 
 # El certificado y su renovacion automatica usan siempre este STEPPATH,
@@ -104,6 +117,34 @@ chmod 0640 "$DESTINO_TLS/servidor.key"
 echo "==> Publicando la raiz de la CA para la verificacion de clientes"
 install -d -m 0755 /etc/step/certs
 install -m 0644 "$RAIZ_CA" /etc/step/certs/root_ca.crt
+
+# El umbral de renovacion se calcula sobre el certificado REALMENTE emitido,
+# no sobre lo pedido: si la CA tiene un maximo mas corto, recorta sin avisar.
+vigencia_segundos=$(( $(date -d "$(openssl x509 -in "$DESTINO_TLS/servidor.crt" -noout -enddate | cut -d= -f2)" +%s) \
+                    - $(date -d "$(openssl x509 -in "$DESTINO_TLS/servidor.crt" -noout -startdate | cut -d= -f2)" +%s) ))
+vigencia_dias=$(( vigencia_segundos / 86400 ))
+renovar_antes_horas=$(( (vigencia_segundos - RENOVAR_CADA_DIAS * 86400) / 3600 ))
+
+if (( renovar_antes_horas < 8 )); then
+    renovar_antes_horas=$(( vigencia_segundos / 3600 / 3 ))
+    (( renovar_antes_horas < 8 )) && renovar_antes_horas=8
+    echo "AVISO: la CA emitio un certificado de ${vigencia_dias} dia(s), menos que los" >&2
+    echo "       ${RENOVAR_CADA_DIAS} dias pedidos entre renovaciones. Se renovara cuando le" >&2
+    echo "       queden ${renovar_antes_horas} h. Para ampliar la vigencia de la CA:" >&2
+    echo "         sudo ./07-vigencia-dispositivos.sh --dias 90" >&2
+    echo "       y vuelva a ejecutar este script." >&2
+else
+    echo "==> Certificado de ${vigencia_dias} dias; se renovara cada ${RENOVAR_CADA_DIAS} dias"
+fi
+
+install -d -o root -g jocotoco -m 0750 /etc/jocotoco
+cat > /etc/jocotoco/cert-renew.env <<ENV
+# Lo escribe 03-emitir-cert-servidor.sh. Umbral de "step ca renew": el
+# certificado se cambia cuando le queda menos de esto, lo que equivale a
+# renovarlo cada ${RENOVAR_CADA_DIAS} dias (vigencia de ${vigencia_dias} dias).
+JOCOTOCO_RENOVAR_ANTES=${renovar_antes_horas}h
+ENV
+chmod 0644 /etc/jocotoco/cert-renew.env
 
 echo "==> Instalando la renovacion automatica (systemd timer)"
 install -m 0644 "$(dirname "$0")/../systemd/jocotoco-cert-renew.service" /etc/systemd/system/
@@ -186,7 +227,9 @@ cat <<RESUMEN
    Llave : ${DESTINO_TLS}/servidor.key
    Raiz  : /etc/step/certs/root_ca.crt  (Apache valida clientes con esta)
 
- Renovacion: jocotoco-cert-renew.timer (cada 8 h, recarga Apache).
+ Renovacion: jocotoco-cert-renew.timer comprueba cada 8 h y renueva cada
+             ${RENOVAR_CADA_DIAS} dias (umbral ${renovar_antes_horas} h, en
+             /etc/jocotoco/cert-renew.env); recarga Apache al cambiarlo.
  Verifique:  curl -sk https://${DOMINIO}:${PUERTO_API}/v1/salud | jq
 ===========================================================================
 RESUMEN

@@ -212,13 +212,30 @@ du -sh /var/lib/jocotoco/cola
 
 ## 8. Renovacion del certificado
 
+El certificado se cambia **cada 30 dias**. Conviene distinguir dos ritmos
+que no son el mismo:
+
+| | Cada cuanto |
+|---|---|
+| El temporizador comprueba | 4 h |
+| El certificado se renueva | 30 dias |
+
 `jocotoco-renovar-cert.timer` corre cada 4 h y ejecuta
-`step ca renew --expires-in 8h`: renueva solo si al certificado le quedan
-menos de 8 horas.
+`step ca renew --expires-in $JOCOTOCO_RENOVAR_ANTES`, que solo renueva si al
+certificado le queda menos de ese margen. El bootstrap lo calcula como
+"vigencia menos 30 dias" y lo deja en `/etc/jocotoco/dispositivo.env`: con
+90 dias de vigencia son 1440 h (60 dias), de modo que el cambio ocurre al
+mes de emitido.
+
+Esas comprobaciones de mas son deliberadas: son las que permiten que un
+equipo que estuvo semanas sin enlace renueve en su primera ventana de
+conexion, en lugar de esperar a la siguiente fecha. Para otro ritmo, en el
+bootstrap: `--renovar-cada 15`.
 
 ```bash
 systemctl list-timers 'jocotoco-*'
-sudo systemctl start jocotoco-renovar-cert.service     # renovar ahora
+grep RENOVAR /etc/jocotoco/dispositivo.env             # umbral vigente
+sudo systemctl start jocotoco-renovar-cert.service     # comprobar ahora
 step certificate inspect /etc/jocotoco/tls/dispositivo.crt --short
 ```
 

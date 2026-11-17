@@ -276,6 +276,26 @@ devuelven en `application/problem+json` mediante `ErrorDocument` y los
 archivos de `public/errores/`, para que el cliente reciba siempre el mismo
 formato de error.
 
+### Renovacion del certificado del servidor
+
+`03` deja instalado `jocotoco-cert-renew.timer`, que **comprueba cada 8 h y
+renueva cada 30 dias**: el umbral que usa `step ca renew --expires-in` se
+calcula como "vigencia menos 30 dias" sobre el certificado realmente
+emitido y queda en `/etc/jocotoco/cert-renew.env`. Con 90 dias de vigencia
+son 1440 h. Al renovar, recarga Apache.
+
+```bash
+systemctl list-timers jocotoco-cert-renew.timer
+cat /etc/jocotoco/cert-renew.env
+sudo systemctl start jocotoco-cert-renew.service   # comprobar ahora
+openssl x509 -in /etc/jocotoco/tls/servidor.crt -noout -dates
+```
+
+Si la CA todavia tiene el maximo de 24 h de una instalacion antigua, `03`
+avisa y cae a renovar cuando quede un tercio de vida; para arreglarlo,
+`07-vigencia-dispositivos.sh --dias 90` y volver a ejecutar `03`. Otro
+ritmo: `sudo ./03-emitir-cert-servidor.sh --dominio ... --renovar-cada 15`.
+
 ## 4. Registrar dispositivos
 
 Uno por Raspberry, en el servidor de la CA:

@@ -1,5 +1,5 @@
 [Unit]
-Description=Renovar cada 8 horas el certificado TLS del API Jocotoco
+Description=Comprueba cada 8 h el certificado TLS del API (lo renueva cada 30 dias)
 
 [Timer]
 OnBootSec=5min
