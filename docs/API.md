@@ -308,6 +308,18 @@ voltios entre -1000 y 1000, `device_id` opcional y, si viene, igual al del
 certificado. Hasta `telemetry_max_records` (1000) registros y
 `telemetry_max_body_bytes` (1 MiB) por solicitud.
 
+## POST /api/telemetry/current
+
+Corriente del sistema de alimentacion, en **amperios**. Mismo formato,
+limites y reglas que el voltaje; la lista va en la clave `current`:
+
+```json
+{ "current": [ { "timestamp": 1792000000, "value": 0.82, "device_id": "rpi-yanacocha-01" } ] }
+```
+
+Se deduplica por `device_id` + `timestamp` + `value`, como el voltaje. La
+respuesta es la misma (`recibidas`, `guardadas`, `duplicadas`).
+
 ## POST /api/telemetry/status
 
 ```json
@@ -364,5 +376,5 @@ no existe.
 
 ## GET /v1/telemetria
 
-Lo ultimo recibido del dispositivo que consulta: `voltaje` y `estado`, con
+Lo ultimo recibido del dispositivo que consulta: `voltaje`, `corriente` y `estado`, con
 `limite` registros de cada uno (1–200, defecto 20).

@@ -87,7 +87,7 @@ final class Application
         $clock ??= new SystemClock();
         $logger = new Logger($config->string('log_path'), $clock);
 
-        $database = new Database($config->string('db_path'), $root . '/database/migrations');
+        $database = self::createDatabase($config, $root);
         $storage = new AudioStorage(
             $config->string('audio_dir'),
             $clock,
@@ -99,6 +99,33 @@ final class Application
         $service = new RecordingService($reader, $validator, $storage, $repository, $clock, $logger);
 
         return new self($config, $database, $storage, $repository, $service, $validator, $clock, $logger);
+    }
+
+    /**
+     * Conexion segun db_driver: PostgreSQL en produccion (db_dsn, db_user,
+     * db_password) o SQLite (db_path) para pruebas y desarrollo.
+     */
+    public static function createDatabase(Config $config, ?string $root = null): Database
+    {
+        $root ??= dirname(__DIR__);
+        $driver = strtolower(trim((string) $config->get('db_driver'))) ?: Database::SQLITE;
+
+        if ($driver === Database::PGSQL) {
+            $dsn = trim((string) $config->get('db_dsn'));
+            if ($dsn === '') {
+                throw new \Jocotoco\Exception\ConfigurationException('db_driver=pgsql requiere db_dsn (JOCOTOCO_DB_DSN).');
+            }
+
+            return new Database(
+                $dsn,
+                $root . '/database/migrations-pgsql',
+                driver: Database::PGSQL,
+                user: (string) $config->get('db_user'),
+                password: (string) $config->get('db_password'),
+            );
+        }
+
+        return new Database($config->string('db_path'), $root . '/database/migrations', driver: $driver);
     }
 
     public function config(): Config
@@ -267,6 +294,7 @@ final class Application
         // cliente (contrato de integracion v1.0, secciones 3 y 4).
         $router->post('/api/sincronizar', $this->authenticated($events->store(...)));
         $router->post('/api/telemetry/voltage', $this->authenticated($telemetry->voltage(...)));
+        $router->post('/api/telemetry/current', $this->authenticated($telemetry->current(...)));
         $router->post('/api/telemetry/status', $this->authenticated($telemetry->status(...)));
 
         // Consulta de lo recibido, para operacion y verificacion.

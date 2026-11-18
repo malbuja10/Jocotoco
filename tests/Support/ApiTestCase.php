@@ -14,6 +14,13 @@ use PHPUnit\Framework\TestCase;
 /**
  * Base para pruebas que levantan la aplicacion completa contra
  * directorios temporales y una base SQLite propia.
+ *
+ * Con JOCOTOCO_TEST_PG_DSN definido las mismas pruebas corren contra
+ * PostgreSQL (el esquema public se vacia antes de cada prueba, asi que use
+ * una base dedicada):
+ *
+ *   JOCOTOCO_TEST_PG_DSN="pgsql:host=127.0.0.1;port=5432;dbname=jocotoco_test" \
+ *   JOCOTOCO_TEST_PG_USER=jocotoco JOCOTOCO_TEST_PG_PASSWORD=... vendor/bin/phpunit
  */
 abstract class ApiTestCase extends TestCase
 {
@@ -21,6 +28,9 @@ abstract class ApiTestCase extends TestCase
     protected CertificateFactory $ca;
     protected FrozenClock $clock;
     protected Application $app;
+
+    /** @var list<Application> aplicaciones creadas, para cerrar sus conexiones */
+    private array $applications = [];
 
     protected function setUp(): void
     {
@@ -30,11 +40,18 @@ abstract class ApiTestCase extends TestCase
         $this->ca = new CertificateFactory($this->tmp->child('pki'));
         $this->clock = new FrozenClock(time());
         $this->app = $this->createApplication();
+        if ($this->app->database()->isPostgres()) {
+            $this->app->database()->connection()->exec('DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public');
+        }
         $this->app->prepare();
     }
 
     protected function tearDown(): void
     {
+        foreach ($this->applications as $application) {
+            $application->database()->close();
+        }
+        $this->applications = [];
         $this->tmp->remove();
 
         parent::tearDown();
@@ -43,12 +60,18 @@ abstract class ApiTestCase extends TestCase
     /** @param array<string,mixed> $overrides */
     protected function createApplication(array $overrides = []): Application
     {
-        return Application::create(array_merge([
+        $pgDsn = (string) getenv('JOCOTOCO_TEST_PG_DSN');
+
+        return $this->applications[] = Application::create(array_merge([
+            'db_driver' => $pgDsn !== '' ? 'pgsql' : 'sqlite',
+            'db_dsn' => $pgDsn,
+            'db_user' => (string) getenv('JOCOTOCO_TEST_PG_USER'),
+            'db_password' => (string) getenv('JOCOTOCO_TEST_PG_PASSWORD'),
             'data_dir' => $this->tmp->path,
             'audio_dir' => $this->tmp->child('audio'),
             'db_path' => $this->tmp->child('jocotoco.sqlite'),
             'tmp_dir' => $this->tmp->child('tmp'),
-            'log_path' => $this->tmp->child('api.log'),
+            'log_path' => getenv('JOCOTOCO_TEST_LOG') ?: $this->tmp->child('api.log'),
             'require_mtls' => true,
             'ca_issuer_common_name' => 'Jocotoco Intermediate CA',
             'allowed_devices' => [],

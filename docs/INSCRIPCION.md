@@ -88,7 +88,7 @@ Cada intento, aceptado o no, queda en la tabla `enrollment_attempts` con IP
 y motivo:
 
 ```bash
-sudo -u jocotoco sqlite3 /var/lib/jocotoco/jocotoco.sqlite \
+sudo -u jocotoco psql jocotoco -c \
   "SELECT created_at, device_id, ip, result, detail FROM enrollment_attempts ORDER BY id DESC LIMIT 20;"
 ```
 

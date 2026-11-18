@@ -37,9 +37,21 @@ return [
     // Tolerancia de reloj al validar notBefore del certificado de cliente.
     'certificate_clock_skew_seconds' => 60,
 
+    // --- Base de datos --------------------------------------------------
+    // "pgsql" en el servidor (PostgreSQL 16 de Ubuntu 24.04); "sqlite"
+    // queda para las pruebas automaticas y el desarrollo local.
+    'db_driver' => 'pgsql',
+    // DSN de PDO. Por socket local con autenticacion "peer" no hace falta
+    // contrasena: el usuario del sistema del pool de php-fpm (jocotoco) es
+    // el rol de PostgreSQL. Por TCP: "pgsql:host=127.0.0.1;port=5432;dbname=jocotoco".
+    'db_dsn' => 'pgsql:host=/var/run/postgresql;dbname=jocotoco',
+    'db_user' => '',
+    // Solo por entorno (JOCOTOCO_DB_PASSWORD), nunca en el repositorio.
+    'db_password' => '',
+
     // --- Almacenamiento -------------------------------------------------
     'data_dir' => $dataDir,
-    // Vacio => <data_dir>/audio, <data_dir>/jocotoco.sqlite, <data_dir>/tmp
+    // Vacio => <data_dir>/audio, <data_dir>/jocotoco.sqlite (solo con db_driver=sqlite), <data_dir>/tmp
     'audio_dir' => '',
     'db_path' => '',
     'tmp_dir' => '',
@@ -102,6 +114,19 @@ return [
     // Se devuelven al dispositivo para que sepa a que CA dirigirse.
     'ca_url' => '',
     'ca_root_fingerprint' => '',
+
+    // --- Panel web de monitoreo (panel/) --------------------------------
+    // Estado del equipo segun el tiempo desde su ultima conexion al API.
+    'panel_online_seconds' => 1800,      // < 30 min: En linea
+    'panel_idle_seconds' => 21600,       // < 6 h: Inactivo; mas: Desconectado
+    'panel_timezone' => 'America/Guayaquil',
+    // Rangos normales; fuera de ellos el panel marca la lectura como alerta.
+    'panel_voltage_min' => 11.5,
+    'panel_voltage_max' => 14.8,
+    'panel_current_max' => 5.0,
+    // Confianza del modelo a partir de la cual una deteccion se resalta.
+    'panel_confidence_high' => 0.85,
+    'panel_confidence_medium' => 0.6,
 
     // --- Observabilidad -------------------------------------------------
     // Ruta del log JSON, o "stderr" para delegar a php-fpm/journald.

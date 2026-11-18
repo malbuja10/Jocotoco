@@ -48,6 +48,48 @@ final class TelemetryApiTest extends ApiTestCase
         self::assertSame(12.4, (float) $filas[0]['value']);
     }
 
+    public function testGuardaLaCorrienteYNoDuplicaUnReenvio(): void
+    {
+        $marca = $this->clock->now() - 120;
+        $lote = ['current' => [
+            ['timestamp' => $marca, 'value' => 0.82, 'device_id' => self::DISPOSITIVO],
+            ['timestamp' => $marca + 60, 'value' => 1.05],
+        ]];
+
+        $primera = $this->app->handle($this->json('/api/telemetry/current', $this->ca->clientPem(self::DISPOSITIVO), $lote));
+        $cuerpo = $this->decode($primera);
+        self::assertSame(200, $primera->status, $primera->body);
+        self::assertSame(2, $cuerpo['guardadas']);
+
+        $reenvio = $this->decode($this->app->handle(
+            $this->json('/api/telemetry/current', $this->ca->clientPem(self::DISPOSITIVO), $lote),
+        ));
+        self::assertSame(0, $reenvio['guardadas']);
+        self::assertSame(2, $reenvio['duplicadas']);
+
+        $filas = $this->app->database()->connection()
+            ->query('SELECT measured_at, value FROM current_readings ORDER BY measured_at')
+            ->fetchAll(\PDO::FETCH_ASSOC);
+        self::assertCount(2, $filas);
+        self::assertSame(0.82, (float) $filas[0]['value']);
+
+        $ultimo = $this->decode($this->app->handle(
+            $this->request('GET', '/v1/telemetria', $this->ca->clientPem(self::DISPOSITIVO)),
+        ));
+        self::assertSame(1.05, (float) $ultimo['corriente'][0]['value']);
+    }
+
+    public function testRechazaCorrienteDeOtroDispositivo(): void
+    {
+        $response = $this->app->handle($this->json(
+            '/api/telemetry/current',
+            $this->ca->clientPem(self::DISPOSITIVO),
+            ['current' => [['timestamp' => $this->clock->now(), 'value' => 0.5, 'device_id' => 'otro-equipo']]],
+        ));
+
+        self::assertSame(403, $response->status);
+    }
+
     public function testGuardaElEstadoDelDispositivoConElPayloadDelContrato(): void
     {
         $marca = $this->clock->now() - 60;
@@ -399,7 +441,7 @@ final class TelemetryApiTest extends ApiTestCase
 
     public function testRechazaTelemetriaSinCertificado(): void
     {
-        foreach (['/api/telemetry/voltage', '/api/telemetry/status'] as $ruta) {
+        foreach (['/api/telemetry/voltage', '/api/telemetry/current', '/api/telemetry/status'] as $ruta) {
             $response = $this->app->handle($this->json($ruta, null, ['voltage' => []]));
 
             self::assertSame(401, $response->status, $ruta);

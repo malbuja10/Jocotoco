@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
 # Instala el API de audio en Ubuntu 24.04: PHP 8.3, Apache, usuario de
-# servicio, directorios de datos y base SQLite.
+# servicio, directorios de datos y base PostgreSQL.
 #
 # Uso:  sudo ./02-instalar-api.sh [--origen /ruta/al/repo] \
 #                                 [--destino /srv/jocotoco] \
@@ -57,7 +57,7 @@ echo "==> Comprobando la disponibilidad de los paquetes"
 apt-get update -qq
 
 faltan=()
-for paquete in apache2 php8.3-fpm php8.3-cli php8.3-sqlite3 php8.3-mbstring; do
+for paquete in apache2 php8.3-fpm php8.3-cli php8.3-pgsql php8.3-sqlite3 php8.3-mbstring postgresql; do
     politica="$(apt-cache policy "$paquete" 2>/dev/null || true)"
     if [[ -z "$politica" ]] || grep -q 'Candidate: (none)' <<<"$politica"; then
         faltan+=("$paquete")
@@ -74,10 +74,12 @@ if (( ${#faltan[@]} > 0 )); then
     exit 1
 fi
 
-echo "==> Instalando PHP 8.3, Apache y utilidades"
+echo "==> Instalando PHP 8.3, Apache, PostgreSQL y utilidades"
+# php8.3-sqlite3 y sqlite3 se conservan: los usa la copia desde la base
+# SQLite de versiones anteriores (bin/jocotoco migrar-desde-sqlite).
 apt-get install -y -qq \
-    apache2 \
-    php8.3-fpm php8.3-cli php8.3-sqlite3 php8.3-mbstring php8.3-curl php8.3-xml \
+    apache2 postgresql \
+    php8.3-fpm php8.3-cli php8.3-pgsql php8.3-sqlite3 php8.3-mbstring php8.3-curl php8.3-xml \
     sqlite3 unzip curl rsync jq ca-certificates
 
 php_version="$(php -r 'echo PHP_VERSION;')"
@@ -96,6 +98,18 @@ fi
 
 echo "==> Creando usuario de servicio ${USUARIO}"
 id -u "$USUARIO" >/dev/null 2>&1 || useradd --system --home "$DATOS" --shell /usr/sbin/nologin "$USUARIO"
+
+echo "==> Preparando PostgreSQL (rol y base ${USUARIO})"
+# Conexion por el socket local con autenticacion "peer" (la regla por
+# defecto de Ubuntu): el usuario del sistema jocotoco entra como el rol
+# jocotoco, sin contrasena que guardar en ningun archivo.
+systemctl enable --now postgresql >/dev/null 2>&1 || systemctl start postgresql
+if ! runuser -u postgres -- psql -tAc "SELECT 1 FROM pg_roles WHERE rolname = '${USUARIO}'" | grep -q 1; then
+    runuser -u postgres -- psql -q -c "CREATE ROLE ${USUARIO} LOGIN"
+fi
+if ! runuser -u postgres -- psql -tAc "SELECT 1 FROM pg_database WHERE datname = '${USUARIO}'" | grep -q 1; then
+    runuser -u postgres -- createdb -O "${USUARIO}" -E UTF8 "${USUARIO}"
+fi
 
 echo "==> Creando directorios"
 install -d -o "$USUARIO" -g "$USUARIO" -m 0750 "$DATOS" "$DATOS/audio" "$DATOS/tmp"
@@ -124,9 +138,22 @@ find "$DESTINO" -type f -exec chmod 0644 {} +
 chmod 0755 "$DESTINO/bin/jocotoco"
 find "$DESTINO/deploy" -name '*.sh' -exec chmod 0755 {} +
 
-echo "==> Aplicando migraciones"
+echo "==> Aplicando migraciones (PostgreSQL)"
 runuser -u "$USUARIO" -- env JOCOTOCO_DATA_DIR="$DATOS" JOCOTOCO_LOG_PATH="$LOGS/api.log" \
     php "$DESTINO/bin/jocotoco" migrate
+
+# Instalaciones anteriores guardaban todo en SQLite. Si esa base existe y
+# PostgreSQL todavia no tiene datos, se copia una vez. El archivo SQLite no
+# se borra: queda como respaldo hasta que el operador lo retire.
+if [[ -s "$DATOS/jocotoco.sqlite" ]]; then
+    filas_pg="$(runuser -u "$USUARIO" -- psql -d "$USUARIO" -tAc "SELECT (SELECT COUNT(*) FROM devices) + (SELECT COUNT(*) FROM detection_events)" 2>/dev/null || echo 0)"
+    if [[ "${filas_pg:-0}" == "0" ]]; then
+        echo "==> Copiando los datos de la base SQLite anterior a PostgreSQL"
+        runuser -u "$USUARIO" -- env JOCOTOCO_DATA_DIR="$DATOS" JOCOTOCO_LOG_PATH="$LOGS/api.log" \
+            php "$DESTINO/bin/jocotoco" migrar-desde-sqlite "$DATOS/jocotoco.sqlite"
+        echo "    La base SQLite queda como respaldo en $DATOS/jocotoco.sqlite"
+    fi
+fi
 
 echo "==> Configurando php-fpm"
 POOL=/etc/php/8.3/fpm/pool.d/jocotoco.conf

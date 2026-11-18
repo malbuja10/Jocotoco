@@ -17,7 +17,10 @@ declare(strict_types=1);
  *                                   mas antiguos que N dias
  *   bin/jocotoco consultar <SQL>    Consulta la base en solo lectura
  *   bin/jocotoco eventos [disp]     Ultimos eventos de deteccion
- *   bin/jocotoco telemetria [disp]  Ultimo voltaje y estado de los equipos
+ *   bin/jocotoco telemetria [disp]  Ultimo voltaje, corriente y estado de los equipos
+ *   bin/jocotoco migrar-desde-sqlite <archivo.sqlite>
+ *                                   Copia los datos de la base SQLite anterior
+ *                                   a PostgreSQL (una sola vez, al cambiar de motor)
  *   bin/jocotoco inscripciones      Estado del alta automatica por dispositivo
  *   bin/jocotoco bloquear-inscripcion <dispositivo> [motivo]
  *                                   Impide que ese dispositivo vuelva a
@@ -97,6 +100,15 @@ $tabla = static function (array $filas) use ($salida): void {
  * consulta ya viene comprobada como de lectura.
  */
 $soloLectura = static function () use ($app): PDO {
+    if ($app->database()->isPostgres()) {
+        // Conexion propia en modo de solo lectura: PostgreSQL rechaza
+        // cualquier escritura en ella, aunque la consulta la intentara.
+        $pdo = Application::createDatabase($app->config())->connection();
+        $pdo->exec('SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY');
+
+        return $pdo;
+    }
+
     $ruta = $app->config()->string('db_path');
 
     try {
@@ -107,6 +119,13 @@ $soloLectura = static function () use ($app): PDO {
         return $app->database()->connection();
     }
 };
+
+$esPg = $app->database()->isPostgres();
+
+/** Fecha legible (UTC) de una columna epoch, en el dialecto del motor. */
+$epoch = static fn (string $columna): string => $esPg
+    ? sprintf("to_char(to_timestamp(%s) AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')", $columna)
+    : sprintf("datetime(%s, 'unixepoch')", $columna);
 
 /** Solo consultas: ni una escritura por descuido desde la linea de comandos. */
 $esLectura = static function (string $sql): bool {
@@ -192,7 +211,7 @@ switch ($command) {
         // Eventos y telemetria siguen la misma politica de retencion: el
         // evento sin su audio deja de tener valor probatorio.
         $pdo = $app->database()->connection();
-        foreach (['detection_events', 'voltage_readings', 'device_telemetry'] as $tabla) {
+        foreach (['detection_events', 'voltage_readings', 'current_readings', 'device_telemetry'] as $tabla) {
             $statement = $pdo->prepare(sprintf('DELETE FROM %s WHERE received_at < :limite', $tabla));
             $statement->execute([':limite' => $limite]);
             $salida(sprintf('%-18s filas eliminadas: %d', $tabla, $statement->rowCount()));
@@ -210,7 +229,8 @@ switch ($command) {
 
             Solo acepta SELECT, WITH, PRAGMA y EXPLAIN, sobre una conexion
             de solo lectura. Las marcas de tiempo epoch se leen con
-            datetime(columna,'unixepoch') (UTC) o ...,'-5 hours' (Ecuador).
+            to_timestamp(columna) en PostgreSQL, o con
+            datetime(columna,'unixepoch') en SQLite.
             USO . PHP_EOL);
             exit(1);
         }
@@ -219,8 +239,9 @@ switch ($command) {
 
         if ($argumento === 'tablas') {
             $filas = [];
-            $nombres = $pdo->query(
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+            $nombres = $pdo->query($esPg
+                ? "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
+                : "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
             )->fetchAll(PDO::FETCH_COLUMN);
 
             foreach ($nombres as $nombre) {
@@ -236,6 +257,27 @@ switch ($command) {
 
         if ($argumento === 'esquema') {
             $nombre = $argv[3] ?? '';
+            if ($esPg) {
+                $statement = $pdo->prepare(
+                    "SELECT column_name AS columna, data_type AS tipo, is_nullable AS nulo, column_default AS defecto
+                     FROM information_schema.columns
+                     WHERE table_schema = 'public' AND table_name = :t ORDER BY ordinal_position",
+                );
+                $statement->execute([':t' => $nombre]);
+                $columnas = $statement->fetchAll(PDO::FETCH_ASSOC);
+                if ($columnas === []) {
+                    fwrite(STDERR, sprintf('No existe la tabla %s.' . PHP_EOL, $nombre));
+                    exit(1);
+                }
+                $tabla($columnas);
+                $indices = $pdo->prepare("SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND tablename = :t");
+                $indices->execute([':t' => $nombre]);
+                foreach ($indices->fetchAll(PDO::FETCH_COLUMN) as $indice) {
+                    $salida($indice . ';');
+                }
+                break;
+            }
+
             $statement = $pdo->prepare(
                 "SELECT sql FROM sqlite_master WHERE tbl_name = :t AND sql IS NOT NULL ORDER BY type DESC",
             );
@@ -270,8 +312,8 @@ switch ($command) {
     case 'eventos':
         $dispositivo = $argv[2] ?? '';
         $sql = "SELECT substr(id, 1, 8) AS id, device_id AS dispositivo, event_id,
-                       threat_type AS clase, round(confidence_score, 2) AS puntaje,
-                       datetime(event_timestamp, 'unixepoch') AS ocurrido_utc,
+                       threat_type AS clase, round(CAST(confidence_score AS NUMERIC), 2) AS puntaje,
+                       " . $epoch('event_timestamp') . " AS ocurrido_utc,
                        duration_sec AS seg,
                        CASE WHEN recording_id IS NULL THEN 'no' ELSE 'si' END AS audio,
                        received_at AS recibido
@@ -291,22 +333,32 @@ switch ($command) {
         $parametros = $dispositivo === '' ? [] : [':d' => $dispositivo];
 
         $voltaje = $pdo->prepare(
-            "SELECT device_id AS dispositivo, datetime(measured_at, 'unixepoch') AS medido_utc,
+            'SELECT device_id AS dispositivo, ' . $epoch('measured_at') . ' AS medido_utc,
                     value AS voltios, received_at AS recibido
-             FROM voltage_readings" . $donde . ' ORDER BY measured_at DESC LIMIT 15',
+             FROM voltage_readings' . $donde . ' ORDER BY measured_at DESC LIMIT 15',
         );
         $voltaje->execute($parametros);
 
+        $corriente = $pdo->prepare(
+            'SELECT device_id AS dispositivo, ' . $epoch('measured_at') . ' AS medido_utc,
+                    value AS amperios, received_at AS recibido
+             FROM current_readings' . $donde . ' ORDER BY measured_at DESC LIMIT 15',
+        );
+        $corriente->execute($parametros);
+
         $estado = $pdo->prepare(
-            "SELECT device_id AS dispositivo, datetime(measured_at, 'unixepoch') AS medido_utc,
+            'SELECT device_id AS dispositivo, ' . $epoch('measured_at') . ' AS medido_utc,
                     cpu_temp AS cpu_c, cpu_usage_pct AS cpu_pct, ram_usage_pct AS ram_pct,
                     disk_free_gb AS disco_gb, disk_usage_pct AS disco_pct, uptime_hours AS horas
-             FROM device_telemetry" . $donde . ' ORDER BY measured_at DESC LIMIT 15',
+             FROM device_telemetry' . $donde . ' ORDER BY measured_at DESC LIMIT 15',
         );
         $estado->execute($parametros);
 
         $salida('Voltaje');
         $tabla($voltaje->fetchAll(PDO::FETCH_ASSOC));
+        $salida('');
+        $salida('Corriente');
+        $tabla($corriente->fetchAll(PDO::FETCH_ASSOC));
         $salida('');
         $salida('Estado del equipo');
         $tabla($estado->fetchAll(PDO::FETCH_ASSOC));
@@ -358,6 +410,79 @@ switch ($command) {
         $salida(sprintf('El dispositivo %s puede inscribirse de nuevo.', $dispositivo));
         break;
 
+    case 'migrar-desde-sqlite':
+        $origen = $argv[2] ?? '';
+        if ($origen === '' || !is_file($origen)) {
+            fwrite(STDERR, 'Uso: bin/jocotoco migrar-desde-sqlite <archivo.sqlite>' . PHP_EOL);
+            exit(1);
+        }
+        if (!$esPg) {
+            fwrite(STDERR, 'El destino debe ser PostgreSQL (JOCOTOCO_DB_DRIVER=pgsql).' . PHP_EOL);
+            exit(1);
+        }
+
+        $app->prepare();
+        $sqlite = new PDO('sqlite:file:' . $origen . '?mode=ro', null, null, [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        ]);
+        $pg = $app->database()->connection();
+        $existentes = $sqlite->query("SELECT name FROM sqlite_master WHERE type = 'table'")->fetchAll(PDO::FETCH_COLUMN);
+
+        // Orden por dependencias: event_reviews apunta a detection_events.
+        $tablas = ['devices', 'recordings', 'enrollments', 'enrollment_attempts', 'detection_events',
+            'voltage_readings', 'current_readings', 'device_telemetry', 'device_profiles', 'event_reviews'];
+
+        $pg->beginTransaction();
+        try {
+            foreach ($tablas as $nombre) {
+                if (!in_array($nombre, $existentes, true)) {
+                    continue;
+                }
+                $columnasPg = $pg->query(sprintf(
+                    "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = '%s'",
+                    $nombre,
+                ))->fetchAll(PDO::FETCH_COLUMN);
+
+                $copiadas = 0;
+                $insert = null;
+                foreach ($sqlite->query(sprintf('SELECT * FROM "%s"', $nombre)) as $fila) {
+                    $fila = array_intersect_key($fila, array_flip($columnasPg));
+                    if ($insert === null) {
+                        $cols = array_keys($fila);
+                        $insert = $pg->prepare(sprintf(
+                            'INSERT INTO %s (%s) VALUES (%s) ON CONFLICT DO NOTHING',
+                            $nombre,
+                            implode(', ', $cols),
+                            implode(', ', array_map(static fn ($c) => ':' . $c, $cols)),
+                        ));
+                    }
+                    $insert->execute(array_combine(array_map(static fn ($c) => ':' . $c, array_keys($fila)), array_values($fila)));
+                    $copiadas += $insert->rowCount();
+                }
+
+                // Las columnas identidad siguen numerando despues de lo copiado.
+                if (in_array('id', $columnasPg, true) && $pg->query(sprintf(
+                    "SELECT pg_get_serial_sequence('%s', 'id') IS NOT NULL",
+                    $nombre,
+                ))->fetchColumn()) {
+                    $pg->exec(sprintf(
+                        "SELECT setval(pg_get_serial_sequence('%1\$s', 'id'), COALESCE((SELECT MAX(id) FROM %1\$s), 0) + 1, false)",
+                        $nombre,
+                    ));
+                }
+
+                $salida(sprintf('%-20s %d filas copiadas', $nombre, $copiadas));
+            }
+            $pg->commit();
+        } catch (Throwable $exception) {
+            $pg->rollBack();
+            fwrite(STDERR, 'La copia fallo y no se guardo nada: ' . $exception->getMessage() . PHP_EOL);
+            exit(1);
+        }
+        $salida('Copia terminada. El audio no se mueve: sigue en ' . $app->config()->string('audio_dir'));
+        break;
+
     default:
         $salida(<<<TXT
         Jocotoco Audio API
@@ -368,7 +493,8 @@ switch ($command) {
           inspeccionar-cert <archivo.crt>  Interpreta un certificado de step-ca
           listar [dispositivo]             Ultimas grabaciones
           eventos [dispositivo]            Ultimos eventos de deteccion
-          telemetria [dispositivo]         Ultimo voltaje y estado
+          telemetria [dispositivo]         Ultimo voltaje, corriente y estado
+          migrar-desde-sqlite <archivo>    Copia la base SQLite anterior a PostgreSQL
           consultar <SQL>                  Consulta la base en solo lectura
                                            (tambien: consultar tablas |
                                             consultar esquema <tabla>)

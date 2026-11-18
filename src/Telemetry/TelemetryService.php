@@ -12,7 +12,7 @@ use Jocotoco\Support\Logger;
 use Jocotoco\Support\MarcaDeTiempo;
 
 /**
- * Voltaje y estado del dispositivo (seccion 4 del contrato del monitor).
+ * Voltaje, corriente y estado del dispositivo (seccion 4 del contrato del monitor).
  *
  * Un lote con un registro invalido se rechaza entero. Es deliberado: el
  * monitor borra sus datos locales solo cuando recibe 200/201, asi que
@@ -64,6 +64,48 @@ final class TelemetryService
         );
 
         $this->logger->info('Voltaje recibido', [
+            'dispositivo' => $device->id,
+            'recibidas' => count($lecturas),
+            'guardadas' => $resultado['guardadas'],
+            'duplicadas' => $resultado['duplicadas'],
+        ]);
+
+        return [
+            'status' => 'ok',
+            'recibidas' => count($lecturas),
+            'guardadas' => $resultado['guardadas'],
+            'duplicadas' => $resultado['duplicadas'],
+        ];
+    }
+
+    /**
+     * Corriente en amperios. Mismo formato que el voltaje, con la lista en
+     * la clave "current": [{"timestamp":..., "value": 0.82, "device_id":...}].
+     *
+     * @param array<string,mixed> $cuerpo
+     * @return array<string,mixed>
+     */
+    public function current(array $cuerpo, DeviceIdentity $device): array
+    {
+        $registros = $this->extraerLista($cuerpo, 'current');
+        $lecturas = [];
+
+        foreach ($registros as $indice => $registro) {
+            $this->comprobarDispositivo($registro, $device, $indice);
+
+            $lecturas[] = [
+                'measured_at' => $this->marcaDeTiempo($registro, $indice),
+                'value' => $this->requerido($registro, 'value', $indice, -1000.0, 1000.0),
+            ];
+        }
+
+        $resultado = $this->repository->saveCurrent(
+            $device->id,
+            $lecturas,
+            $this->clock->nowIso8601(),
+        );
+
+        $this->logger->info('Corriente recibida', [
             'dispositivo' => $device->id,
             'recibidas' => count($lecturas),
             'guardadas' => $resultado['guardadas'],

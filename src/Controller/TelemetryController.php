@@ -14,7 +14,7 @@ use Jocotoco\Telemetry\TelemetryService;
 use JsonException;
 
 /**
- * Voltaje y estado del dispositivo (seccion 4 del contrato del monitor).
+ * Voltaje, corriente y estado del dispositivo (seccion 4 del contrato del monitor).
  */
 final class TelemetryController
 {
@@ -31,6 +31,12 @@ final class TelemetryController
         return Response::json(200, $this->service->voltage($this->leerJson($request), $device));
     }
 
+    /** POST /api/telemetry/current */
+    public function current(Request $request, array $params, DeviceIdentity $device): Response
+    {
+        return Response::json(200, $this->service->current($this->leerJson($request), $device));
+    }
+
     /** POST /api/telemetry/status */
     public function status(Request $request, array $params, DeviceIdentity $device): Response
     {
@@ -45,6 +51,7 @@ final class TelemetryController
         return Response::json(200, [
             'dispositivo' => $device->id,
             'voltaje' => $this->repository->lastVoltage($device->id, $limite),
+            'corriente' => $this->repository->lastCurrent($device->id, $limite),
             'estado' => $this->repository->lastStatus($device->id, $limite),
         ]);
     }

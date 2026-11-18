@@ -13,7 +13,7 @@ contrasenas, la identidad es el certificado y la renueva `step-cli` sola.
  │ cola en disco      │  mTLS  ─────► │ php8.3-fpm  →  public/index.php    │
  │   ↓                │               │   ↓                                │
  │ curl --cert --key  │               │ /var/lib/jocotoco/audio/<disp>/... │
- │ step ca renew (30d)│               │ SQLite (metadatos)                 │
+ │ step ca renew (30d)│               │ PostgreSQL 16 (metadatos)          │
  └────────────────────┘               └────────────────────────────────────┘
           ▲                                          ▲
           └────────── step-ca (CA interna) ──────────┘
@@ -43,9 +43,11 @@ contrasenas, la identidad es el certificado y la renueva `step-cli` sola.
 | `src/Audio/` | Lectura del cuerpo, validacion, caso de uso de recepcion, lectura de cabeceras WAV |
 | `src/Events/` | Eventos de deteccion del monitor (`/api/sincronizar`) |
 | `src/Telemetry/` | Voltaje y estado del dispositivo (`/api/telemetry/*`) |
-| `src/Storage/` | Archivos en disco, SQLite y migraciones |
+| `src/Storage/` | Archivos en disco, conexion PostgreSQL/SQLite y migraciones |
+| `database/` | Migraciones: `migrations-pgsql/` (servidor) y `migrations/` (SQLite, pruebas) |
+| `panel/` | **Panel web de monitoreo**: dispositivos, voltaje, corriente, graficas, amenazas con audio e historicos ([`docs/PANEL.md`](docs/PANEL.md)) |
 | `src/Controller/` | Endpoints |
-| `bin/jocotoco` | CLI: `migrate`, `config`, `inspeccionar-cert`, `listar`, `eventos`, `telemetria`, `consultar`, `purgar`, `inscripciones` |
+| `bin/jocotoco` | CLI: `migrate`, `config`, `inspeccionar-cert`, `listar`, `eventos`, `telemetria`, `consultar`, `purgar`, `inscripciones`, `migrar-desde-sqlite` |
 | `deploy/scripts/` | Instalacion de step-ca y del API en Ubuntu 24.04 (`05-activar-api.sh` activa el sitio con reversion automatica) |
 | `deploy/raspberry/` | Cliente del dispositivo en bash (step-cli + curl + systemd) |
 | `deploy/raspberry/python/` | Cliente equivalente en Python, para integrarlo en un programa propio |
@@ -73,6 +75,9 @@ sudo ./bootstrap-dispositivo.sh --nombre rpi-yanacocha-01 \
 
 # 5. Enviar una grabacion
 jocotoco-grabar-audio --segundos 60 --enviar
+
+# 6. Servidor: panel web de monitoreo (usuario y contrasena)
+sudo deploy/scripts/09-instalar-panel.sh --dominio api.jocotoco.local --puerto 8445
 ```
 
 El detalle esta en [`docs/DESPLIEGUE.md`](docs/DESPLIEGUE.md) y
@@ -87,6 +92,7 @@ solos desde su propio codigo, vea [`docs/INSCRIPCION.md`](docs/INSCRIPCION.md).
 | POST | `/v1/inscripcion` | no | Alta automatica: token de step-ca a cambio del secreto de fabrica (deshabilitada por defecto) |
 | POST | `/api/sincronizar` | si | Evento de deteccion + WAV (`multipart`), idempotente por `device_id` + `event_id` |
 | POST | `/api/telemetry/voltage` | si | Lote de lecturas de voltaje |
+| POST | `/api/telemetry/current` | si | Lote de lecturas de corriente (amperios) |
 | POST | `/api/telemetry/status` | si | Lote de estado del dispositivo (CPU, RAM, disco, uptime) |
 | GET | `/v1/eventos` | si | Eventos del dispositivo |
 | GET | `/v1/eventos/{id}` | si | Un evento, con el payload original |
@@ -134,7 +140,10 @@ php-fpm) sobre los valores de `config/config.php`:
 
 | Variable | Defecto | Para que |
 |----------|---------|----------|
-| `JOCOTOCO_DATA_DIR` | `/var/lib/jocotoco` | Raiz de datos (audio, SQLite, temporales) |
+| `JOCOTOCO_DATA_DIR` | `/var/lib/jocotoco` | Raiz de datos (audio, temporales) |
+| `JOCOTOCO_DB_DRIVER` | `pgsql` | Motor de base de datos (`pgsql`; `sqlite` solo para pruebas) |
+| `JOCOTOCO_DB_DSN` | `pgsql:host=/var/run/postgresql;dbname=jocotoco` | DSN de PDO (socket local, autenticacion peer) |
+| `JOCOTOCO_DB_USER` / `JOCOTOCO_DB_PASSWORD` | vacio | Solo si la conexion es por TCP con contrasena |
 | `JOCOTOCO_REQUIRE_MTLS` | `true` | Exigir certificado de cliente |
 | `JOCOTOCO_CA_ISSUER_COMMON_NAME` | `*` | CN de la CA que debe haber firmado el certificado |
 | `JOCOTOCO_ALLOWED_DEVICES` | vacio | Lista blanca (`rpi-uno,*.sensores.local`) |

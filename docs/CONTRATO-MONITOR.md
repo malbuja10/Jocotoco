@@ -14,6 +14,7 @@ la seccion 7 del *Contrato de integracion API | Monitor Jocotoco* v1.0
 | Inscripcion inicial | POST | `https://dev.minkafab.com:8444/v1/inscripcion` | `DEVICE_ENROLLMENT_URL` |
 | Evento + WAV | POST | `https://dev.minkafab.com:8444/api/sincronizar` | `THREAT_API_URL` |
 | Voltaje | POST | `https://dev.minkafab.com:8444/api/telemetry/voltage` | `VOLTAGE_API_URL` |
+| Corriente (nuevo) | POST | `https://dev.minkafab.com:8444/api/telemetry/current` | `CURRENT_API_URL` |
 | Estado del dispositivo | POST | `https://dev.minkafab.com:8444/api/telemetry/status` | `DEVICE_TELEMETRY_API_URL` |
 | Sonda de salud (sin certificado) | GET | `https://dev.minkafab.com:8444/v1/salud` | — |
 | CA (solo `step`) | — | `https://dev.minkafab.com:8443` | `STEP_CA_URL` |
@@ -114,7 +115,8 @@ Nunca se devuelve `202` ni `204` como acuse de exito.
 | `cpu_usage_pct`, `ram_usage_pct`, `disk_usage_pct` | porcentaje 0–100 |
 | `disk_free_gb` | GB |
 | `uptime_hours` | horas |
-| `value` (voltaje) | voltios, con decimales; se guarda como `REAL` (doble precision), sin redondear |
+| `value` (voltaje) | voltios, con decimales; se guarda en doble precision, sin redondear |
+| `value` (corriente) | amperios, con decimales; mismo formato que el voltaje, lista en la clave `current` |
 | `duration_sec`, `sample_rate`, `channels`, `bit_depth` | se guardan los que trae la cabecera del WAV, no los declarados |
 | Fechas en las respuestas | ISO 8601 en UTC (`2026-10-14T12:26:40Z`) |
 
@@ -125,8 +127,8 @@ detectar un equipo con el reloj corrido sin perder el dato.
 ## 6. Persistencia, deduplicacion y trazabilidad
 
 - `200`/`201` se devuelven **despues** de escribir el audio en disco (archivo
-  temporal y `rename`, que es atomico) y de confirmar la transaccion SQLite
-  en modo WAL. Si cualquiera de los dos falla, el codigo es `5xx` y el
+  temporal y `rename`, que es atomico) y de confirmar la transaccion en
+  PostgreSQL. Si cualquiera de los dos falla, el codigo es `5xx` y el
   monitor conserva su copia.
 - **Eventos:** clave logica `device_id` + `event_id`, con indice unico. Un
   reenvio devuelve `200`, la cabecera `Idempotent-Replay: true` y el evento

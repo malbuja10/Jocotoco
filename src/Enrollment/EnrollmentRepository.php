@@ -32,7 +32,7 @@ final class EnrollmentRepository
             'INSERT INTO enrollments (device_id, tokens_issued, first_seen_at, last_seen_at, last_ip)
              VALUES (:id, 1, :now, :now, :ip)
              ON CONFLICT(device_id) DO UPDATE SET
-                tokens_issued = tokens_issued + 1,
+                tokens_issued = enrollments.tokens_issued + 1,
                 last_seen_at = :now,
                 last_ip = :ip',
         );

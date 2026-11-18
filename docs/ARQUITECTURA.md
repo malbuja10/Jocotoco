@@ -23,7 +23,7 @@ jocotoco-enviar-audio  ──curl --cert/--key──►  Apache :443
         ▼
    AudioStorage.store  → <raiz>/<disp>/<aaaa>/<mm>/<dd>/<ulid>.<ext>
         ▼                  (escribe .parcial y renombra)
-   RecordingRepository.save  → SQLite (indice unico disp+sha256)
+   RecordingRepository.save  → PostgreSQL (indice unico disp+sha256)
         ▼
    201 Created + Location + ETag
 ```
@@ -33,7 +33,7 @@ jocotoco-enviar-audio  ──curl --cert/--key──►  Apache :443
 ### Sin framework
 
 La aplicacion no tiene dependencias de runtime: solo extensiones estandar de
-PHP (`json`, `openssl`, `pdo_sqlite`). Un API que expone siete rutas no
+PHP (`json`, `openssl`, `pdo_pgsql`; `pdo_sqlite` para las pruebas). Un API que expone siete rutas no
 justifica el costo de mantener y actualizar un framework en equipos que a
 veces pasan meses sin tocarse. PHPUnit es la unica dependencia, y de
 desarrollo. La capa HTTP propia (`src/Http/`) es deliberadamente pequena y
@@ -113,16 +113,25 @@ asi que se sanea antes de usarlo como directorio (se colapsan `..`, se
 sustituye todo lo que no sea `[A-Za-z0-9._-]`), y `AudioStorage::absolutePath`
 comprueba con `realpath` que la ruta final siga dentro del arbol de datos.
 
-### SQLite
+### PostgreSQL (y SQLite para pruebas)
 
-El audio vive en disco y la base solo guarda metadatos: unos pocos cientos de
-bytes por grabacion, escritos por decenas de dispositivos. SQLite en modo WAL
-con `busy_timeout` cubre ese perfil sin operar un servidor de base de datos
-en el nodo. Si mas adelante se necesita PostgreSQL, el cambio esta contenido
-en `Storage/Database.php` y `Storage/RecordingRepository.php`.
+El audio vive en disco y la base guarda metadatos, eventos y telemetria. En
+el servidor la base es PostgreSQL 16 (la de Ubuntu 24.04): la comparten el
+API y el panel web, que corre con otro usuario y otro rol de solo lectura
+(salvo sus dos tablas). La conexion va por el socket local con
+autenticacion *peer*, asi que no hay contrasenas en archivos.
 
-Las migraciones son archivos `.sql` numerados en `database/migrations/`,
-aplicados en una transaccion y registrados en `schema_migrations`.
+Los repositorios usan SQL comun a PostgreSQL y SQLite (`ON CONFLICT`,
+`LIMIT/OFFSET`, columnas calificadas en `DO UPDATE`). Lo que cambia es el
+DDL, por eso hay dos carpetas de migraciones con las mismas versiones:
+`database/migrations-pgsql/` (produccion) y `database/migrations/` (SQLite,
+para las pruebas automaticas y el desarrollo local). El motor se elige con
+`db_driver` (`JOCOTOCO_DB_DRIVER`). La suite completa corre contra los dos:
+`JOCOTOCO_TEST_PG_DSN=... vendor/bin/phpunit` (ver `tests/Support/ApiTestCase.php`).
+
+Las fechas se guardan como texto ISO 8601 UTC en ambos motores: el codigo
+las compara como cadenas y asi se comporta igual. Las marcas del
+dispositivo (`measured_at`, `event_timestamp`) son epoch en `BIGINT`.
 
 ### ULID en lugar de UUID
 
@@ -150,9 +159,9 @@ temporal (reintentar), que es la decision que realmente necesita tomar.
 
 ## Limites conocidos
 
-- **Un solo nodo.** El almacenamiento es el sistema de archivos local y la
-  base es SQLite. Para varios nodos hay que mover el audio a
-  almacenamiento compartido (NFS, S3) y los metadatos a PostgreSQL.
+- **Un solo nodo.** El audio esta en el sistema de archivos local. Para
+  varios nodos hay que moverlo a almacenamiento compartido (NFS, S3); la
+  base PostgreSQL ya puede estar en otro servidor (`JOCOTOCO_DB_DSN` por TCP).
 - **Sin CRL activa.** La configuracion de Apache trae `SSLCARevocationFile`
   comentado. Con
   certificados de 24 h no suele hacer falta; si su politica la exige,

@@ -137,8 +137,8 @@ final class RecordingRepository
              ON CONFLICT(id) DO UPDATE SET
                 last_seen_at = :now,
                 last_cert_fingerprint = :fingerprint,
-                recordings_count = recordings_count + :recordings,
-                bytes_stored = bytes_stored + :bytes',
+                recordings_count = devices.recordings_count + :recordings,
+                bytes_stored = devices.bytes_stored + :bytes',
         );
 
         $statement->execute([

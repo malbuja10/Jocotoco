@@ -9,26 +9,60 @@ use PDO;
 use PDOException;
 
 /**
- * Conexion SQLite y aplicacion de migraciones.
+ * Conexion a la base de datos y aplicacion de migraciones.
  *
- * SQLite en modo WAL es suficiente para este caso de uso (decenas de
- * dispositivos escribiendo metadatos pequenos); el audio vive en disco.
+ * En produccion se usa PostgreSQL (driver "pgsql"); SQLite en modo WAL se
+ * conserva para las pruebas y el desarrollo local. Las consultas de los
+ * repositorios son SQL comun a ambos (ON CONFLICT, LIMIT/OFFSET); lo que
+ * cambia es el DDL, por eso cada motor tiene su carpeta de migraciones:
+ *
+ *   database/migrations/         SQLite
+ *   database/migrations-pgsql/   PostgreSQL
+ *
+ * Las versiones se llaman igual en las dos, de modo que schema_migrations
+ * dice lo mismo sea cual sea el motor.
  */
 final class Database
 {
+    public const SQLITE = 'sqlite';
+    public const PGSQL = 'pgsql';
+
     private ?PDO $connection = null;
 
+    /**
+     * @param string $path ruta del archivo SQLite (driver sqlite) o DSN completo de PDO (driver pgsql)
+     */
     public function __construct(
         private readonly string $path,
         private readonly string $migrationsDirectory,
         private readonly int $busyTimeoutMs = 5000,
+        private readonly string $driver = self::SQLITE,
+        private readonly ?string $user = null,
+        private readonly ?string $password = null,
     ) {
+        if (!in_array($driver, [self::SQLITE, self::PGSQL], true)) {
+            throw new StorageException(sprintf('Motor de base de datos no soportado: "%s" (use sqlite o pgsql).', $driver));
+        }
+    }
+
+    public function driver(): string
+    {
+        return $this->driver;
+    }
+
+    public function isPostgres(): bool
+    {
+        return $this->driver === self::PGSQL;
     }
 
     public function connection(): PDO
     {
         if ($this->connection instanceof PDO) {
             return $this->connection;
+        }
+
+        if ($this->driver === self::PGSQL) {
+            return $this->connection = $this->connectPostgres();
         }
 
         if ($this->path !== ':memory:') {
@@ -54,6 +88,29 @@ final class Database
         $pdo->exec(sprintf('PRAGMA busy_timeout = %d', $this->busyTimeoutMs));
 
         return $this->connection = $pdo;
+    }
+
+    private function connectPostgres(): PDO
+    {
+        $dsn = str_starts_with($this->path, 'pgsql:') ? $this->path : 'pgsql:' . $this->path;
+
+        try {
+            $pdo = new PDO($dsn, $this->user ?: null, $this->password ?: null, [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_EMULATE_PREPARES => false,
+                PDO::ATTR_STRINGIFY_FETCHES => false,
+            ]);
+        } catch (PDOException $exception) {
+            // El mensaje de PDO puede incluir el DSN; nunca la contrasena.
+            throw new StorageException('No se pudo conectar a PostgreSQL: ' . $exception->getMessage(), 0, $exception);
+        }
+
+        $pdo->exec("SET TIME ZONE 'UTC'");
+        $pdo->exec(sprintf('SET statement_timeout = %d', max(1000, $this->busyTimeoutMs * 6)));
+        $pdo->exec(sprintf('SET lock_timeout = %d', $this->busyTimeoutMs));
+
+        return $pdo;
     }
 
     /**
@@ -100,6 +157,12 @@ final class Database
         }
 
         return $executed;
+    }
+
+    /** Libera la conexion (PostgreSQL limita las conexiones simultaneas). */
+    public function close(): void
+    {
+        $this->connection = null;
     }
 
     public function isHealthy(): bool

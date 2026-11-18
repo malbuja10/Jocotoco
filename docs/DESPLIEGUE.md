@@ -8,7 +8,8 @@ los repositorios oficiales, sin necesidad de PPA).
 | Componente | Version | Origen |
 |------------|---------|--------|
 | Ubuntu | 24.04 LTS | — |
-| PHP | 8.3 (`php8.3-fpm`, `php8.3-sqlite3`, `php8.3-mbstring`, `php8.3-curl`, `php8.3-xml`) | repositorio Ubuntu |
+| PHP | 8.3 (`php8.3-fpm`, `php8.3-pgsql`, `php8.3-sqlite3`, `php8.3-mbstring`, `php8.3-curl`, `php8.3-xml`) | repositorio Ubuntu |
+| PostgreSQL | 16 (`postgresql`) | repositorio Ubuntu |
 | Apache | 2.4.58 (`apache2`, con `ssl`, `proxy_fcgi`, `headers`, `alias`, `reqtimeout`, `rewrite`) | repositorio Ubuntu |
 | step-ca / step-cli | 0.30.x (`step-ca` 0.30.2, `step-cli` 0.30.6 al momento de escribir) | paquetes `.deb` de smallstep |
 | Composer | 2.x | getcomposer.org |
@@ -78,12 +79,19 @@ sudo deploy/scripts/02-instalar-api.sh --dominio api.jocotoco.local
 
 Hace lo siguiente:
 
-- instala PHP 8.3, Apache, SQLite y Composer;
-- crea el usuario de servicio `jocotoco`;
+- instala PHP 8.3, Apache, PostgreSQL 16 y Composer;
+- crea el usuario de servicio `jocotoco` y, en PostgreSQL, el rol y la base
+  `jocotoco` (conexion por socket local con autenticacion *peer*: no hay
+  contrasena que guardar);
 - crea `/var/lib/jocotoco{,/audio,/tmp}` (0750, del usuario `jocotoco`) y
   `/var/log/jocotoco`;
 - copia el codigo a `/srv/jocotoco` e instala dependencias sin `--dev`;
-- aplica las migraciones (`bin/jocotoco migrate`);
+- aplica las migraciones (`bin/jocotoco migrate`, carpeta
+  `database/migrations-pgsql/`);
+- si encuentra la base SQLite de una version anterior
+  (`/var/lib/jocotoco/jocotoco.sqlite`) y PostgreSQL esta vacio, copia sus
+  datos una vez (`bin/jocotoco migrar-desde-sqlite`); el archivo SQLite queda
+  como respaldo;
 - habilita MPM event y los modulos de Apache necesarios, instala el pool de
   php-fpm, el `.ini` de OPcache, la conf de endurecimiento, la rotacion de
   logs y el temporizador de purga.
@@ -374,36 +382,31 @@ sudo find /var/lib/jocotoco/audio -name 'AMENAZA_chainsaw_*' -printf '%TF %TR  %
 
 ### Consultar la base a mano
 
-La base vive en `/var/lib/jocotoco/jocotoco.sqlite` (modo WAL, de ahi los
-archivos `-wal` y `-shm`). No hace falta instalar `sqlite3`: el CLI trae un
-intérprete de consultas que abre la base **en solo lectura** y rechaza todo
-lo que no sea `SELECT`, `WITH`, `PRAGMA` o `EXPLAIN`.
+Los datos estan en PostgreSQL, base `jocotoco`. El CLI trae un interprete
+de consultas que abre una conexion **de solo lectura** (PostgreSQL rechaza
+cualquier escritura en ella) y que ademas solo acepta `SELECT`, `WITH` o
+`EXPLAIN`:
 
 ```bash
 cd /srv/jocotoco
-php bin/jocotoco consultar tablas                  # tablas y numero de filas
-php bin/jocotoco consultar esquema detection_events
-php bin/jocotoco consultar "SELECT device_id, COUNT(*) AS eventos,
+sudo -u jocotoco php bin/jocotoco consultar tablas                  # tablas y numero de filas
+sudo -u jocotoco php bin/jocotoco consultar esquema detection_events
+sudo -u jocotoco php bin/jocotoco consultar "SELECT device_id, COUNT(*) AS eventos,
     MAX(received_at) AS ultimo FROM detection_events GROUP BY device_id"
 ```
 
 Las columnas `measured_at` y `event_timestamp` son epoch en segundos:
-`datetime(columna,'unixepoch')` las muestra en UTC y
-`datetime(columna,'unixepoch','-5 hours')` en hora de Ecuador. Las `*_at`
-ya son texto ISO 8601 en UTC.
+`to_timestamp(columna)` las convierte en fecha, y
+`to_timestamp(columna) AT TIME ZONE 'America/Guayaquil'` las muestra en hora
+de Ecuador. Las `*_at` son texto ISO 8601 en UTC.
 
-Si prefiere el cliente `sqlite3`, instalelo desde una cuenta con sudo y
-abralo **como el usuario del servicio y en solo lectura**:
+Con `psql`, siempre como el usuario del servicio:
 
 ```bash
-sudo apt-get install -y sqlite3
-sudo -u jocotoco sqlite3 -readonly -box /var/lib/jocotoco/jocotoco.sqlite ".tables"
+sudo -u jocotoco psql jocotoco -c '\dt'
+sudo -u jocotoco psql jocotoco -c "SELECT device_id, to_timestamp(measured_at), value
+                                   FROM voltage_readings ORDER BY measured_at DESC LIMIT 10"
 ```
-
-Abrirla como root en modo escritura deja los archivos `-wal` y `-shm` con
-dueno root y el API (que corre como `jocotoco`) empieza a fallar con
-*attempt to write a readonly database*. Si pasa:
-`sudo chown jocotoco:jocotoco /var/lib/jocotoco/jocotoco.sqlite*`.
 
 ### Respaldos
 
@@ -412,13 +415,35 @@ Tres cosas, en este orden de importancia:
 1. `/etc/step/` (llaves de la CA y contrasena) — sin esto no se emiten
    certificados nuevos;
 2. `/var/lib/jocotoco/audio/` — las grabaciones;
-3. `/var/lib/jocotoco/jocotoco.sqlite` — metadatos. Copielo en caliente con
-   `sqlite3 ... ".backup"`, no con `cp`:
+3. la base `jocotoco` de PostgreSQL — metadatos, eventos y telemetria.
+   `pg_dump` hace una copia consistente con el API en marcha:
 
 ```bash
-sudo -u jocotoco sqlite3 /var/lib/jocotoco/jocotoco.sqlite \
-     ".backup '/var/backups/jocotoco-$(date +%F).sqlite'"
+sudo -u postgres pg_dump -Fc jocotoco > /var/backups/jocotoco-$(date +%F).dump
+# Restaurar en una base vacia:
+sudo -u postgres pg_restore -d jocotoco --clean --if-exists /var/backups/jocotoco-AAAA-MM-DD.dump
 ```
+
+### Cambio desde SQLite (instalaciones anteriores)
+
+`02-instalar-api.sh` copia los datos solo la primera vez. Para repetir la
+copia a mano (no duplica filas: ignora las que ya estan):
+
+```bash
+sudo -u jocotoco php /srv/jocotoco/bin/jocotoco migrar-desde-sqlite /var/lib/jocotoco/jocotoco.sqlite
+```
+
+Los audios no se mueven: siguen en `/var/lib/jocotoco/audio`. Cuando
+compruebe que el panel y `bin/jocotoco eventos` muestran lo esperado, el
+archivo SQLite (y sus `-wal`/`-shm`) se puede archivar.
+
+### Panel web de monitoreo
+
+```bash
+sudo deploy/scripts/09-instalar-panel.sh --dominio dev.minkafab.com --puerto 8445 --usuario admin
+```
+
+Detalle en [`PANEL.md`](PANEL.md).
 
 ### Actualizar el codigo
 
