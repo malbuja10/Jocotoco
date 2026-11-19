@@ -50,6 +50,7 @@ contrasenas, la identidad es el certificado y la renueva `step-cli` sola.
 | `deploy/raspberry/` | Cliente del dispositivo en bash (step-cli + curl + systemd) |
 | `deploy/raspberry/python/` | Cliente equivalente en Python, para integrarlo en un programa propio |
 | `deploy/herramientas/jocotoco-probar` | Prueba los cuatro endpoints contra un API desplegado, desde cualquier escritorio |
+| `deploy/raspberry/parches/` | Cambios preparados para el repositorio del monitor, que vive aparte |
 | `deploy/apache/`, `deploy/php/`, `deploy/systemd/` | Configuracion de servicio |
 | `docs/` | API, inscripcion, despliegue, dispositivos y decisiones de diseno |
 
