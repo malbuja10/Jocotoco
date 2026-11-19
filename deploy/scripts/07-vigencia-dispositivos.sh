@@ -3,9 +3,13 @@
 # Amplia la vigencia de los certificados de dispositivo, para equipos que
 # pasan semanas sin conexion (por ejemplo una Raspberry en campo).
 #
-# Uso:  sudo ./07-vigencia-dispositivos.sh                 # 90 dias
-#       sudo ./07-vigencia-dispositivos.sh --dias 180
+# Uso:  sudo ./07-vigencia-dispositivos.sh                 # 90 dias, renovar cada 30
+#       sudo ./07-vigencia-dispositivos.sh --dias 180 --renovar-cada 60
 #       sudo ./07-vigencia-dispositivos.sh --prohibir-renovar-expirados
+#
+# Este es el unico sitio donde se decide la vigencia: lo que elija aqui
+# queda escrito en /etc/jocotoco/politica-certificados.env y de ahi lo leen
+# 03 (certificado del servidor), 04 (alta de equipos) y 09 (estado).
 #
 # Por que: step-ca solo renueva un certificado que TODAVIA sea valido. Con
 # vigencia de 24 h, un equipo sin internet mas de un dia queda fuera y hay
@@ -25,7 +29,13 @@
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
-DIAS=90
+AQUI="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib-politica.sh
+source "$AQUI/lib-politica.sh"
+politica_leer
+
+DIAS="$POLITICA_VIGENCIA_DIAS"
+RENOVAR_CADA="$POLITICA_RENOVAR_CADA_DIAS"
 DIAS_MAX=""
 PROVISIONER="dispositivos"
 PERMITIR_EXPIRADOS=true
@@ -35,6 +45,7 @@ CONFIG="$STEPPATH/config/ca.json"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dias) DIAS="$2"; shift 2 ;;
+        --renovar-cada) RENOVAR_CADA="$2"; shift 2 ;;
         --dias-maximo) DIAS_MAX="$2"; shift 2 ;;
         --provisioner) PROVISIONER="$2"; shift 2 ;;
         --permitir-renovar-expirados) PERMITIR_EXPIRADOS=true; shift ;;
@@ -47,6 +58,15 @@ done
 [[ -f "$CONFIG" ]] || { echo "No encuentro $CONFIG." >&2; exit 1; }
 command -v jq >/dev/null 2>&1 || { echo "Falta jq: apt-get install -y jq" >&2; exit 1; }
 [[ "$DIAS" =~ ^[0-9]+$ ]] && (( DIAS >= 1 )) || { echo "--dias debe ser un entero >= 1." >&2; exit 1; }
+[[ "$RENOVAR_CADA" =~ ^[0-9]+$ ]] && (( RENOVAR_CADA >= 1 )) \
+    || { echo "--renovar-cada debe ser un entero de dias >= 1." >&2; exit 1; }
+(( RENOVAR_CADA < DIAS )) || {
+    echo "ERROR: --renovar-cada (${RENOVAR_CADA}) debe ser menor que --dias (${DIAS})." >&2
+    echo "       Si se renueva cada tantos dias como dura, no queda margen para" >&2
+    echo "       los equipos que pasan semanas sin enlace. Pruebe --renovar-cada" >&2
+    echo "       $(( DIAS / 3 )) con --dias ${DIAS}." >&2
+    exit 1
+}
 
 # El maximo, por defecto, triplica la vigencia pedida: deja margen para
 # pedir certificados mas largos sin volver a tocar la CA.
@@ -141,10 +161,24 @@ else
     echo "    (sin ${STEPPATH}/password.txt no se puede emitir la prueba automatica)"
 fi
 
+politica_escribir "$DIAS" "$RENOVAR_CADA" "$PERMITIR_EXPIRADOS"
+umbral_horas="$(politica_umbral_horas "$DIAS" "$RENOVAR_CADA")"
+echo "==> Politica guardada en ${POLITICA_ARCHIVO}"
+
 cat <<RESUMEN
 
 ===========================================================================
  Certificados de dispositivo: ${DIAS} dias (maximo ${DIAS_MAX})
+ Se renuevan cada ${RENOVAR_CADA} dias (umbral ${umbral_horas} h)
+
+ Falta un paso: el certificado del servidor y los umbrales de renovacion
+ se recalculan al reemitirlo.
+
+   sudo ./03-emitir-cert-servidor.sh --dominio <su-dominio>
+
+ Y para ver de un golpe si todo quedo coherente:
+
+   ./09-estado-certificados.sh
 
  Los dispositivos YA registrados no cambian hasta su proxima renovacion.
  Para que tomen la vigencia nueva de inmediato, en cada Raspberry:

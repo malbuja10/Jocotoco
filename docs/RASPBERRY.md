@@ -227,6 +227,10 @@ certificado le queda menos de ese margen. El bootstrap lo calcula como
 90 dias de vigencia son 1440 h (60 dias), de modo que el cambio ocurre al
 mes de emitido.
 
+Si un equipo recibio un certificado mas corto de lo esperado, el problema
+esta en la CA, no aqui: en el servidor, `./09-estado-certificados.sh` lo
+dice en una linea y da el comando que lo corrige.
+
 Esas comprobaciones de mas son deliberadas: son las que permiten que un
 equipo que estuvo semanas sin enlace renueve en su primera ventana de
 conexion, en lugar de esperar a la siguiente fecha. Para otro ritmo, en el

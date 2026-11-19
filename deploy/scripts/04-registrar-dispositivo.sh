@@ -16,8 +16,14 @@
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
+AQUI="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib-politica.sh
+source "$AQUI/lib-politica.sh"
+politica_leer
+
 DISPOSITIVO=""
 VALIDEZ="24h"
+PERMITIR_CORTA=false
 PROVISIONER="${PROVISIONER:-dispositivos}"
 STEPPATH="${STEPPATH:-/etc/step}"
 CA_DNS="${CA_DNS:-}"
@@ -27,6 +33,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --validez) VALIDEZ="$2"; shift 2 ;;
         --provisioner) PROVISIONER="$2"; shift 2 ;;
+        --permitir-vigencia-corta) PERMITIR_CORTA=true; shift ;;
         -*) echo "Parametro desconocido: $1" >&2; exit 1 ;;
         *) DISPOSITIVO="$1"; shift ;;
     esac
@@ -65,6 +72,34 @@ fi
 CA_DNS="${CA_DNS:-ca.jocotoco.local}"
 CA_PUERTO="${CA_PUERTO:-8443}"
 
+horas_ca=0
+# Antes de dar el token: comprobar que la CA va a emitir lo que dice la
+# politica. Es el momento en que se nota, porque el equipo se lleva el
+# certificado al campo y alli nadie ve su vigencia.
+if command -v jq >/dev/null 2>&1; then
+    horas_ca="$(claims_horas "$STEPPATH/config/ca.json" "$PROVISIONER")"
+    dias_ca=$(( horas_ca / 24 ))
+
+    if (( dias_ca < POLITICA_VIGENCIA_DIAS )) && [[ "$PERMITIR_CORTA" != true ]]; then
+        cat >&2 <<AVISO
+ERROR: la CA emitiria un certificado de ${dias_ca} dia(s) (${horas_ca} h), no los
+       ${POLITICA_VIGENCIA_DIAS} dias de la politica (${POLITICA_ORIGEN}).
+
+       El dispositivo quedaria sin servicio al dia siguiente y habria que
+       volver a darlo de alta. No es cosa de lo que se pida al emitir: la
+       vigencia la decide el provisioner de la CA.
+
+       Corrijalo y vuelva a intentarlo:
+         sudo ./07-vigencia-dispositivos.sh --dias ${POLITICA_VIGENCIA_DIAS} --renovar-cada ${POLITICA_RENOVAR_CADA_DIAS}
+         ./09-estado-certificados.sh
+
+       Si de verdad quiere un certificado corto (una prueba, por ejemplo),
+       repita con --permitir-vigencia-corta.
+AVISO
+        exit 1
+    fi
+fi
+
 token="$(runuser -u step -- env STEPPATH="$STEPPATH" step ca token "$DISPOSITIVO" \
     --provisioner "$PROVISIONER" \
     --password-file "$STEPPATH/password.txt" \
@@ -79,7 +114,8 @@ cat <<RESUMEN
  CA            : https://${CA_DNS}:${CA_PUERTO}
  Huella raiz   : ${huella}
 
- Vigencia del certificado que emitira la CA: $(jq -r --arg p "$PROVISIONER" '.authority.provisioners[] | select(.name==$p) | .claims.defaultTLSCertDuration // "24h (por defecto)"' "$STEPPATH/config/ca.json" 2>/dev/null || echo 'ver ca.json')
+ Vigencia que emitira la CA: $( (( horas_ca > 0 )) && echo "$(( horas_ca / 24 )) dias (${horas_ca} h)" || echo "ver ca.json (falta jq)")
+ Se renovara solo cada ${POLITICA_RENOVAR_CADA_DIAS} dias
 
  Ejecute en la Raspberry Pi (el token vence en ${VALIDEZ}):
 

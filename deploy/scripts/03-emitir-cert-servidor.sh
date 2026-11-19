@@ -20,16 +20,21 @@ set -euo pipefail
 DOMINIO="api.jocotoco.local"
 CA_URL=""
 HUELLA=""
+AQUI="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib-politica.sh
+source "$AQUI/lib-politica.sh"
+politica_leer
+
 DESTINO_TLS="/etc/jocotoco/tls"
 RAIZ_CA="/etc/step/certs/root_ca.crt"
 # 90 dias, igual que los certificados de dispositivo. La CA recorta este
 # valor a su maximo si es menor (una CA recien instalada por un 01 antiguo
 # emite 24 h): lo que se use de verdad se lee despues del certificado.
-VIGENCIA="2160h"
-# Cada cuantos dias se cambia el certificado. El temporizador comprueba
-# cada 8 h; el cambio ocurre cuando al certificado le queda menos de
-# "vigencia - estos dias".
-RENOVAR_CADA_DIAS=30
+# Los dos numeros salen de la politica (07-vigencia-dispositivos.sh los
+# escribe); --vigencia y --renovar-cada los sobreescriben para un caso
+# puntual.
+VIGENCIA="$(( POLITICA_VIGENCIA_DIAS * 24 ))h"
+RENOVAR_CADA_DIAS="$POLITICA_RENOVAR_CADA_DIAS"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in

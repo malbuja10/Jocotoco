@@ -50,6 +50,49 @@ La contrasena de las llaves queda en `/etc/step/password.txt` (modo 0600,
 usuario `step`). Respaldela junto con `/etc/step/secrets/` fuera de la
 maquina: sin ella no se pueden emitir mas certificados.
 
+### Vigencia y renovacion: un solo sitio donde se decide
+
+Tres cosas distintas determinan cuanto vive un certificado, y antes estaban
+repartidas por cuatro scripts: los *claims* del provisioner de la CA (lo que
+la CA concede), lo que pide quien emite, y el umbral de renovacion de cada
+equipo. **Manda la CA**: si su provisioner esta en 24 h, da igual lo que se
+pida al emitir, el certificado dura un dia.
+
+Ahora los dos numeros viven en un archivo,
+`/etc/jocotoco/politica-certificados.env`:
+
+```
+VIGENCIA_DIAS=90        # cuanto dura un certificado
+RENOVAR_CADA_DIAS=30    # cada cuanto se cambia
+RENOVAR_TRAS_CADUCAR=true
+```
+
+Lo escribe `07-vigencia-dispositivos.sh` y lo leen `03` (certificado del
+servidor), `04` (alta de equipos) y `09` (estado). Con eso el ciclo queda en
+tres comandos:
+
+```bash
+# 1. Ver como esta todo (devuelve 1 si algo no cuadra: sirve en un cron)
+./09-estado-certificados.sh
+
+# 2. Cambiar la politica (unico sitio donde se decide)
+sudo ./07-vigencia-dispositivos.sh --dias 90 --renovar-cada 30
+
+# 3. Reemitir el certificado del servidor con los valores nuevos
+sudo ./03-emitir-cert-servidor.sh --dominio dev.minkafab.com
+```
+
+`09` imprime la politica, lo que la CA emite de verdad, la vigencia y el
+umbral del certificado del servidor, el estado de los temporizadores y los
+dispositivos vistos; cuando algo no cuadra, dice el comando exacto que lo
+arregla.
+
+Y `04-registrar-dispositivo.sh` ya **no entrega un token** si la CA fuese a
+emitir un certificado mas corto que la politica: es el momento en que se
+nota, porque despues el equipo se lleva ese certificado al campo y alli
+nadie ve su vigencia. Para una prueba corta a proposito:
+`--permitir-vigencia-corta`.
+
 ### Vigencia de los certificados de dispositivo
 
 Por defecto son 24 h, lo que hace innecesaria la revocacion: si un
@@ -442,6 +485,7 @@ sudo systemctl reload apache2
 | `401` con `SSL_CLIENT_VERIFY=NONE` | El cliente no envio certificado, o `SSLVerifyClient` no esta activo |
 | `403` "no fue emitido por la CA esperada" | `JOCOTOCO_CA_ISSUER_COMMON_NAME` no coincide con el CN de la intermedia (compruebe con `step certificate inspect`) |
 | `403` "el certificado expiro" | El timer de renovacion del dispositivo no corre, o su reloj esta desfasado (`timedatectl`) |
+| Un equipo recibe un certificado de un dia | La CA sigue con los claims de fabrica; `./09-estado-certificados.sh` lo dice y da el comando |
 | `403` "aun no es valido" | Reloj del servidor atrasado; la tolerancia es de 60 s (`JOCOTOCO_CERTIFICATE_CLOCK_SKEW_SECONDS`) |
 | `413` con `maximo_bytes` | La aplicacion rechazo por `JOCOTOCO_MAX_UPLOAD_BYTES` |
 | `413` sin cuerpo JSON | `LimitRequestBody` de Apache menor que el audio, o falta `ErrorDocument` |

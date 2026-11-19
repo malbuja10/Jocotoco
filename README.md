@@ -46,7 +46,7 @@ contrasenas, la identidad es el certificado y la renueva `step-cli` sola.
 | `src/Storage/` | Archivos en disco, SQLite y migraciones |
 | `src/Controller/` | Endpoints |
 | `bin/jocotoco` | CLI: `migrate`, `config`, `inspeccionar-cert`, `listar`, `eventos`, `telemetria`, `consultar`, `purgar`, `inscripciones` |
-| `deploy/scripts/` | Instalacion de step-ca y del API en Ubuntu 24.04 (`05-activar-api.sh` activa el sitio con reversion automatica) |
+| `deploy/scripts/` | Instalacion de step-ca y del API en Ubuntu 24.04 (`05-activar-api.sh` activa el sitio con reversion automatica, `09-estado-certificados.sh` revisa vigencias y renovaciones) |
 | `deploy/raspberry/` | Cliente del dispositivo en bash (step-cli + curl + systemd) |
 | `deploy/raspberry/python/` | Cliente equivalente en Python, para integrarlo en un programa propio |
 | `deploy/herramientas/jocotoco-probar` | Prueba los cuatro endpoints contra un API desplegado, desde cualquier escritorio |
