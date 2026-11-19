@@ -26,6 +26,7 @@ STEPPATH="${STEPPATH:-/etc/step}"
 TLS_DIR="${TLS_DIR:-/etc/jocotoco/tls}"
 RENOVACION_ENV="${RENOVACION_ENV:-/etc/jocotoco/cert-renew.env}"
 BASE_API="${BASE_API:-/var/lib/jocotoco/jocotoco.sqlite}"
+POOL_PHP="${POOL_PHP:-/etc/php/8.3/fpm/pool.d/jocotoco.conf}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -135,6 +136,27 @@ else
     else
         mal "El temporizador jocotoco-cert-renew.timer no esta habilitado."
         arreglos+=("sudo systemctl enable --now jocotoco-cert-renew.timer")
+    fi
+fi
+
+echo
+echo "Recuperacion sin viaje  (${POOL_PHP})"
+if [[ ! -r "$POOL_PHP" ]]; then
+    dato "(no se pudo leer la configuracion del API; ejecutelo en su servidor)"
+else
+    inscripcion="$(sed -n 's/^env\[JOCOTOCO_ENROLLMENT_ENABLED\] *= *\(.*\)$/\1/p' "$POOL_PHP" | tail -1 | tr -d '" ')"
+    secreto="$(sed -n 's/^env\[JOCOTOCO_ENROLLMENT_SECRET\] *= *\(.*\)$/\1/p' "$POOL_PHP" | tail -1 | tr -d '" ')"
+
+    if [[ "$inscripcion" == true ]]; then
+        bien "La inscripcion automatica esta activa (POST /v1/inscripcion)."
+        dato "Un equipo que vuelve del campo con el certificado inservible"
+        dato "puede pedir uno nuevo solo, sin que nadie viaje."
+        [[ -n "$secreto" ]] || mal "Pero falta el secreto de fabrica: ningun equipo podra inscribirse."
+    else
+        mal "La inscripcion automatica esta apagada."
+        dato "Es el unico camino para que un equipo con el certificado"
+        dato "inservible se recupere sin que alguien vaya hasta el."
+        arreglos+=("sudo ./08-habilitar-inscripcion.sh --secreto '<SECRETO>' --dominio <su-dominio> --puerto 8444")
     fi
 fi
 
